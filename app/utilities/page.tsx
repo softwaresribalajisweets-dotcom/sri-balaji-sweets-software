@@ -13,6 +13,7 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  updateDoc,
 } from "firebase/firestore";
 import {
   Wrench,
@@ -34,6 +35,13 @@ import {
   Layers,
   Sparkles,
   Layers3,
+  List,
+  LayoutGrid,
+  ArrowLeftRight,
+  PackagePlus,
+  Eye,
+  ChevronRight,
+  Package,
 } from "lucide-react";
 
 interface RackItem {
@@ -43,6 +51,8 @@ interface RackItem {
   qrCodeUrl: string;
   imagekitFileId?: string;
   notes?: string;
+  itemCount?: number;
+  assignedItems?: { id: string; name: string; quantity: number }[];
   createdAt?: any;
 }
 
@@ -51,6 +61,7 @@ interface SerialItem {
   serialNumber: string;
   itemName: string;
   qrCodeUrl: string;
+  status?: "Available" | "Assigned" | "In Maintenance";
   notes?: string;
   createdAt?: any;
 }
@@ -59,6 +70,7 @@ export default function UtilitiesPage() {
   const [activeTab, setActiveTab] = useState<"racks" | "serials" | "tools">(
     "racks"
   );
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
   // Racks State
   const [racks, setRacks] = useState<RackItem[]>([]);
@@ -104,9 +116,22 @@ export default function UtilitiesPage() {
     step: string;
   } | null>(null);
 
+  // Add Item to Rack Modal State
+  const [addItemRack, setAddItemRack] = useState<RackItem | null>(null);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemQty, setNewItemQty] = useState(1);
+  const [addingItemToRack, setAddingItemToRack] = useState(false);
+
+  // Move Item Modal State
+  const [moveRack, setMoveRack] = useState<RackItem | null>(null);
+  const [targetRackId, setTargetRackId] = useState("");
+  const [movingItems, setMovingItems] = useState(false);
+
+  // View Rack Contents Modal State
+  const [viewRack, setViewRack] = useState<RackItem | null>(null);
+
   // Filter & Search State
   const [searchQuery, setSearchQuery] = useState("");
-  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Print Preview Modal
   const [printItem, setPrintItem] = useState<{
@@ -167,7 +192,6 @@ export default function UtilitiesPage() {
 
     try {
       setSavingRack(true);
-
       const generatedCode =
         rackCode.trim() ||
         `RCK-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -209,6 +233,7 @@ export default function UtilitiesPage() {
         qrCodeUrl: uploadData.url,
         imagekitFileId: uploadData.fileId || "",
         notes: rackNotes.trim(),
+        assignedItems: [],
         createdAt: serverTimestamp(),
       });
 
@@ -238,9 +263,7 @@ export default function UtilitiesPage() {
 
     const total = end - start + 1;
     if (total > 50) {
-      if (!confirm(`You are creating ${total} racks. This may take a minute. Continue?`)) {
-        return;
-      }
+      if (!confirm(`You are creating ${total} racks. Continue?`)) return;
     }
 
     try {
@@ -257,7 +280,6 @@ export default function UtilitiesPage() {
           step: `Generating QR for ${rName}...`,
         });
 
-        // 1. Generate QR Code
         const qrPayload = JSON.stringify({
           type: "RACK",
           code: rCode,
@@ -272,7 +294,6 @@ export default function UtilitiesPage() {
           color: { dark: "#0d0d0d", light: "#ffffff" },
         });
 
-        // 2. Upload to ImageKit
         setBulkRackProgress({
           current: countIdx,
           total,
@@ -294,7 +315,6 @@ export default function UtilitiesPage() {
           throw new Error(`Failed to upload ${rName}: ${uploadData.error}`);
         }
 
-        // 3. Save to Firestore
         setBulkRackProgress({
           current: countIdx,
           total,
@@ -307,6 +327,7 @@ export default function UtilitiesPage() {
           qrCodeUrl: uploadData.url,
           imagekitFileId: uploadData.fileId || "",
           notes: `Bulk created item #${i}`,
+          assignedItems: [],
           createdAt: serverTimestamp(),
         });
       }
@@ -319,6 +340,76 @@ export default function UtilitiesPage() {
     } finally {
       setBulkRackSaving(false);
       setBulkRackProgress(null);
+    }
+  };
+
+  // Add Item to Rack Action
+  const handleAddItemToRackSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addItemRack || !newItemName.trim()) return;
+
+    try {
+      setAddingItemToRack(true);
+      const currentItems = addItemRack.assignedItems || [];
+      const updatedItems = [
+        ...currentItems,
+        {
+          id: `item_${Date.now()}`,
+          name: newItemName.trim(),
+          quantity: Number(newItemQty) || 1,
+        },
+      ];
+
+      await updateDoc(doc(db, "racks", addItemRack.id), {
+        assignedItems: updatedItems,
+      });
+
+      setNewItemName("");
+      setNewItemQty(1);
+      setAddItemRack(null);
+    } catch (err: any) {
+      alert(`Failed to add item to rack: ${err.message}`);
+    } finally {
+      setAddingItemToRack(false);
+    }
+  };
+
+  // Move Items Action between Racks
+  const handleMoveItemsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!moveRack || !targetRackId) return;
+
+    const targetRack = racks.find((r) => r.id === targetRackId);
+    if (!targetRack) return;
+
+    try {
+      setMovingItems(true);
+      const itemsToMove = moveRack.assignedItems || [];
+      if (itemsToMove.length === 0) {
+        alert("This rack has no items to move.");
+        return;
+      }
+
+      const targetCurrentItems = targetRack.assignedItems || [];
+      const updatedTargetItems = [...targetCurrentItems, ...itemsToMove];
+
+      // Update target rack with moved items
+      await updateDoc(doc(db, "racks", targetRack.id), {
+        assignedItems: updatedTargetItems,
+      });
+
+      // Clear items from source rack
+      await updateDoc(doc(db, "racks", moveRack.id), {
+        assignedItems: [],
+      });
+
+      setMoveRack(null);
+      setTargetRackId("");
+      alert(`Successfully moved ${itemsToMove.length} items from ${moveRack.name} to ${targetRack.name}`);
+    } catch (err: any) {
+      alert(`Error moving items: ${err.message}`);
+    } finally {
+      setMovingItems(false);
     }
   };
 
@@ -365,6 +456,7 @@ export default function UtilitiesPage() {
         serialNumber: serialNumber.trim(),
         itemName: itemName.trim() || "Uncategorized Item",
         qrCodeUrl: uploadData.url,
+        status: "Available",
         notes: serialNotes.trim(),
         createdAt: serverTimestamp(),
       });
@@ -395,9 +487,7 @@ export default function UtilitiesPage() {
 
     const total = end - start + 1;
     if (total > 50) {
-      if (!confirm(`You are creating ${total} serial numbers. Continue?`)) {
-        return;
-      }
+      if (!confirm(`You are creating ${total} serial numbers. Continue?`)) return;
     }
 
     try {
@@ -460,6 +550,7 @@ export default function UtilitiesPage() {
           serialNumber: snCode,
           itemName: itemLabel,
           qrCodeUrl: uploadData.url,
+          status: "Available",
           notes: `Bulk generated serial item #${i}`,
           createdAt: serverTimestamp(),
         });
@@ -476,7 +567,7 @@ export default function UtilitiesPage() {
     }
   };
 
-  // Delete Rack
+  // Delete Actions
   const handleDeleteRack = async (rackId: string) => {
     if (confirm("Are you sure you want to delete this rack?")) {
       try {
@@ -487,7 +578,6 @@ export default function UtilitiesPage() {
     }
   };
 
-  // Delete Serial
   const handleDeleteSerial = async (serialId: string) => {
     if (confirm("Are you sure you want to delete this serial number?")) {
       try {
@@ -535,7 +625,7 @@ export default function UtilitiesPage() {
               Utilities & Rack Management
             </h1>
             <p className="text-xs text-neutral-500">
-              Manage inventory Racks, Serial Number QR codes, and system tools
+              Manage inventory Racks, Serial Number QR codes, item movements, and system tools
             </p>
           </div>
         </div>
@@ -592,17 +682,49 @@ export default function UtilitiesPage() {
       {/* ==================== TAB 1: RACKS ==================== */}
       {activeTab === "racks" && (
         <div className="space-y-4">
-          {/* Controls Bar */}
+          {/* Controls Bar with Search, View Mode Switcher, and Add Actions */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-neutral-200/90 shadow-2xs">
-            <div className="relative w-full sm:w-72">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
-              <input
-                type="text"
-                placeholder="Search racks by name or code..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-neutral-50 text-xs text-neutral-800 placeholder-neutral-400 pl-9 pr-3 py-2 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-500"
-              />
+            <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
+                <input
+                  type="text"
+                  placeholder="Search racks by name or code..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-neutral-50 text-xs text-neutral-800 placeholder-neutral-400 pl-9 pr-3 py-2 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-500"
+                />
+              </div>
+
+              {/* View Toggle Button */}
+              <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-lg border border-neutral-200">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                    viewMode === "list"
+                      ? "bg-white text-neutral-900 shadow-2xs font-bold"
+                      : "text-neutral-500 hover:text-neutral-800"
+                  }`}
+                  title="List View"
+                >
+                  <List className="w-4 h-4" />
+                  <span className="hidden md:inline">List</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("grid")}
+                  className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                    viewMode === "grid"
+                      ? "bg-white text-neutral-900 shadow-2xs font-bold"
+                      : "text-neutral-500 hover:text-neutral-800"
+                  }`}
+                  title="Grid View"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  <span className="hidden md:inline">Grid</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -626,7 +748,7 @@ export default function UtilitiesPage() {
             </div>
           </div>
 
-          {/* Racks Grid Container */}
+          {/* Racks Display Container */}
           {loadingRacks ? (
             <div className="bg-white border border-neutral-200/90 rounded-xl p-12 text-center text-neutral-500 flex flex-col items-center justify-center gap-2">
               <Loader2 className="w-6 h-6 animate-spin text-neutral-700" />
@@ -641,7 +763,7 @@ export default function UtilitiesPage() {
                 No Racks Configured
               </h3>
               <p className="text-xs text-neutral-500 max-w-sm mb-5">
-                Click "Add Rack" or "Bulk Create Racks" to generate QR codes uploaded automatically to ImageKit.
+                Click "Add Rack" or "Bulk Create Racks" to generate QR code tags and start adding/moving products.
               </p>
               <div className="flex items-center gap-3">
                 <button
@@ -662,7 +784,175 @@ export default function UtilitiesPage() {
                 </button>
               </div>
             </div>
+          ) : viewMode === "list" ? (
+            /* ================= RACKS LIST VIEW TABLE ================= */
+            <div className="bg-white border border-neutral-200/90 rounded-xl shadow-2xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-neutral-50/80 border-b border-neutral-200/80 text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 w-20">QR Tag</th>
+                      <th className="py-3 px-4">Rack Info</th>
+                      <th className="py-3 px-4">Stored Items</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-200/60 text-xs">
+                    {filteredRacks.map((rack) => {
+                      const itemCount = rack.assignedItems?.length || 0;
+                      const totalQty =
+                        rack.assignedItems?.reduce(
+                          (acc, item) => acc + (item.quantity || 1),
+                          0
+                        ) || 0;
+
+                      return (
+                        <tr
+                          key={rack.id}
+                          className="hover:bg-neutral-50/60 transition-colors group"
+                        >
+                          {/* QR Thumbnail */}
+                          <td className="py-3 px-4">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPrintItem({
+                                  title: rack.name,
+                                  subtitle: `RACK CODE: ${rack.code}`,
+                                  qrCodeUrl: rack.qrCodeUrl,
+                                })
+                              }
+                              className="relative group/qr block cursor-pointer"
+                              title="Click to print or expand QR tag"
+                            >
+                              <img
+                                src={rack.qrCodeUrl}
+                                alt={`QR for ${rack.name}`}
+                                className="w-11 h-11 object-contain rounded-lg border border-neutral-300 p-0.5 bg-white shadow-2xs group-hover/qr:scale-105 transition-transform"
+                              />
+                            </button>
+                          </td>
+
+                          {/* Rack Name & Code */}
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                                {rack.code}
+                              </span>
+                              <span className="font-bold text-neutral-900 text-sm">
+                                {rack.name}
+                              </span>
+                            </div>
+                            {rack.notes && (
+                              <p className="text-[11px] text-neutral-500 mt-0.5">
+                                {rack.notes}
+                              </p>
+                            )}
+                          </td>
+
+                          {/* Items Count Badge & Preview */}
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                  itemCount > 0
+                                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                    : "bg-neutral-100 text-neutral-600 border border-neutral-200"
+                                }`}
+                              >
+                                <Package className="w-3 h-3" />
+                                {itemCount} Items ({totalQty} units)
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Actions Bar */}
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Add Item Button */}
+                              <button
+                                type="button"
+                                onClick={() => setAddItemRack(rack)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                                title="Add product to this rack"
+                              >
+                                <PackagePlus className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Add Item</span>
+                              </button>
+
+                              {/* Move Item Button */}
+                              <button
+                                type="button"
+                                onClick={() => setMoveRack(rack)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                                title="Move items between racks"
+                              >
+                                <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600" />
+                                <span>Move</span>
+                              </button>
+
+                              {/* View Items Button */}
+                              <button
+                                type="button"
+                                onClick={() => setViewRack(rack)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                                title="View rack contents"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-neutral-600" />
+                                <span>View</span>
+                              </button>
+
+                              {/* Download QR */}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleDownloadQR(
+                                    rack.qrCodeUrl,
+                                    `Rack_${rack.code}_QR.png`
+                                  )
+                                }
+                                className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
+                                title="Download QR Image"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Print Tag */}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPrintItem({
+                                    title: rack.name,
+                                    subtitle: `RACK CODE: ${rack.code}`,
+                                    qrCodeUrl: rack.qrCodeUrl,
+                                  })
+                                }
+                                className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
+                                title="Print Rack Tag"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Delete Rack */}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteRack(rack.id)}
+                                className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                                title="Delete Rack"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : (
+            /* ================= RACKS GRID VIEW ================= */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredRacks.map((rack) => (
                 <div
@@ -717,18 +1007,12 @@ export default function UtilitiesPage() {
                   <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-1">
                     <button
                       type="button"
-                      onClick={() =>
-                        handleDownloadQR(
-                          rack.qrCodeUrl,
-                          `Rack_${rack.code}_QR.png`
-                        )
-                      }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-100 hover:bg-neutral-200/80 text-neutral-800 rounded-lg text-xs font-semibold cursor-pointer"
+                      onClick={() => setAddItemRack(rack)}
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-semibold cursor-pointer"
                     >
-                      <Download className="w-3.5 h-3.5 text-neutral-600" />
-                      <span>Download</span>
+                      <PackagePlus className="w-3.5 h-3.5" />
+                      <span>Add Item</span>
                     </button>
-
                     <button
                       type="button"
                       onClick={() =>
@@ -738,10 +1022,10 @@ export default function UtilitiesPage() {
                           qrCodeUrl: rack.qrCodeUrl,
                         })
                       }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       <Printer className="w-3.5 h-3.5" />
-                      <span>Print Tag</span>
+                      <span>Print</span>
                     </button>
                   </div>
                 </div>
@@ -755,15 +1039,44 @@ export default function UtilitiesPage() {
       {activeTab === "serials" && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-neutral-200/90 shadow-2xs">
-            <div className="relative w-full sm:w-72">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
-              <input
-                type="text"
-                placeholder="Search by serial no or item name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-neutral-50 text-xs text-neutral-800 placeholder-neutral-400 pl-9 pr-3 py-2 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-500"
-              />
+            <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
+                <input
+                  type="text"
+                  placeholder="Search by serial no or item name..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-neutral-50 text-xs text-neutral-800 placeholder-neutral-400 pl-9 pr-3 py-2 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-lg border border-neutral-200">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                    viewMode === "list"
+                      ? "bg-white text-neutral-900 shadow-2xs font-bold"
+                      : "text-neutral-500 hover:text-neutral-800"
+                  }`}
+                >
+                  <List className="w-4 h-4" />
+                  <span className="hidden md:inline">List</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("grid")}
+                  className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                    viewMode === "grid"
+                      ? "bg-white text-neutral-900 shadow-2xs font-bold"
+                      : "text-neutral-500 hover:text-neutral-800"
+                  }`}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  <span className="hidden md:inline">Grid</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -822,7 +1135,112 @@ export default function UtilitiesPage() {
                 </button>
               </div>
             </div>
+          ) : viewMode === "list" ? (
+            /* ================= SERIALS LIST VIEW TABLE ================= */
+            <div className="bg-white border border-neutral-200/90 rounded-xl shadow-2xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-neutral-50/80 border-b border-neutral-200/80 text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 w-20">QR Tag</th>
+                      <th className="py-3 px-4">Serial Number</th>
+                      <th className="py-3 px-4">Associated Item / Batch</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-200/60 text-xs">
+                    {filteredSerials.map((s) => (
+                      <tr
+                        key={s.id}
+                        className="hover:bg-neutral-50/60 transition-colors"
+                      >
+                        <td className="py-3 px-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPrintItem({
+                                title: s.itemName,
+                                subtitle: `SERIAL NO: ${s.serialNumber}`,
+                                qrCodeUrl: s.qrCodeUrl,
+                              })
+                            }
+                            className="cursor-pointer"
+                            title="Click to view tag"
+                          >
+                            <img
+                              src={s.qrCodeUrl}
+                              alt={`QR for ${s.serialNumber}`}
+                              className="w-11 h-11 object-contain rounded-lg border border-neutral-300 p-0.5 bg-white shadow-2xs"
+                            />
+                          </button>
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-200">
+                            {s.serialNumber}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-4 font-bold text-neutral-900">
+                          {s.itemName}
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            Available
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleDownloadQR(
+                                  s.qrCodeUrl,
+                                  `SN_${s.serialNumber}_QR.png`
+                                )
+                              }
+                              className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
+                              title="Download QR"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPrintItem({
+                                  title: s.itemName,
+                                  subtitle: `SERIAL NO: ${s.serialNumber}`,
+                                  qrCodeUrl: s.qrCodeUrl,
+                                })
+                              }
+                              className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
+                              title="Print Tag"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSerial(s.id)}
+                              className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                              title="Delete Serial"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : (
+            /* ================= SERIALS GRID VIEW ================= */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredSerials.map((s) => (
                 <div
@@ -929,6 +1347,252 @@ export default function UtilitiesPage() {
         </div>
       )}
 
+      {/* ==================== ADD ITEM TO RACK MODAL ==================== */}
+      {addItemRack && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-emerald-50/60">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-800">
+                  <PackagePlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Add Product to {addItemRack.name}
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 font-mono">
+                    Rack Code: {addItemRack.code}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddItemRack(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddItemToRackSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Product / Item Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Kaju Katli (1 KG)"
+                  value={newItemName}
+                  onChange={(e) => setNewItemName(e.target.value)}
+                  disabled={addingItemToRack}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Quantity / Packets
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  required
+                  value={newItemQty}
+                  onChange={(e) => setNewItemQty(Number(e.target.value))}
+                  disabled={addingItemToRack}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddItemRack(null)}
+                  disabled={addingItemToRack}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingItemToRack || !newItemName.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                >
+                  {addingItemToRack ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <PackagePlus className="w-3.5 h-3.5" />
+                  )}
+                  <span>Store in Rack</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MOVE ITEMS MODAL ==================== */}
+      {moveRack && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-blue-500/20 text-blue-800">
+                  <ArrowLeftRight className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Move Items from {moveRack.name}
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Transfer stored items to a target rack
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMoveRack(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleMoveItemsSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Source Rack
+                </label>
+                <div className="p-2.5 bg-neutral-100 rounded-lg text-xs font-semibold text-neutral-800 border border-neutral-200">
+                  {moveRack.name} ({moveRack.assignedItems?.length || 0} items stored)
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Select Destination Target Rack <span className="text-red-500">*</span>
+                </label>
+                <select
+                  required
+                  value={targetRackId}
+                  onChange={(e) => setTargetRackId(e.target.value)}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none"
+                >
+                  <option value="">-- Choose Target Rack --</option>
+                  {racks
+                    .filter((r) => r.id !== moveRack.id)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name} ({r.code})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMoveRack(null)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={movingItems || !targetRackId}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                >
+                  {movingItems ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  )}
+                  <span>Confirm Move Items</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== VIEW RACK CONTENTS MODAL ==================== */}
+      {viewRack && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-neutral-50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-neutral-900 text-white">
+                  <Box className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    {viewRack.name} Contents
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 font-mono">
+                    RACK CODE: {viewRack.code}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewRack(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {viewRack.assignedItems && viewRack.assignedItems.length > 0 ? (
+                <div className="border border-neutral-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-neutral-100 text-neutral-600 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Item Name</th>
+                        <th className="py-2.5 px-3 text-right">Quantity</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200">
+                      {viewRack.assignedItems.map((item, idx) => (
+                        <tr key={idx}>
+                          <td className="py-2.5 px-3 font-semibold text-neutral-900">
+                            {item.name}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-800">
+                            {item.quantity} units
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-8 text-center bg-neutral-50 rounded-xl border border-neutral-200">
+                  <Package className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-neutral-700">
+                    No items currently stored in this rack
+                  </p>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Click "Add Item" in the rack row to assign products.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-neutral-100 bg-neutral-50 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setViewRack(null)}
+                className="px-4 py-1.5 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ==================== BULK RACK MODAL ==================== */}
       {isBulkRackOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
@@ -970,9 +1634,6 @@ export default function UtilitiesPage() {
                   disabled={bulkRackSaving}
                   className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800"
                 />
-                <span className="text-[10px] text-neutral-400 mt-1 block">
-                  Example preview: "{bulkRackPrefix.trim()} 1", "{bulkRackPrefix.trim()} 2"...
-                </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1137,9 +1798,6 @@ export default function UtilitiesPage() {
                   disabled={bulkSerialSaving}
                   className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800"
                 />
-                <span className="text-[10px] text-neutral-400 mt-1 block">
-                  Example preview: "{bulkSerialPrefix.trim()}001" for "{bulkSerialItemName.trim()} #1"
-                </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
