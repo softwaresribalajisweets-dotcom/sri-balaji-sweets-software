@@ -6,7 +6,7 @@ import Sidebar from "./Sidebar";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex flex-col bg-[#f1f2f4] text-neutral-900 font-sans">
+    <div className="h-screen flex flex-col bg-[#f1f2f4] text-neutral-900 font-sans overflow-hidden">
       <Header />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />

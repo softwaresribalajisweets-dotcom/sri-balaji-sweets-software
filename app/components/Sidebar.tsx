@@ -52,10 +52,10 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-60 bg-[#ebebeb] border-r border-neutral-300/60 flex flex-col justify-between h-[calc(100vh-3.5rem)] sticky top-14 select-none shrink-0">
+    <aside className="w-60 bg-[#ebebeb] border-r border-neutral-300/60 flex flex-col justify-between h-full select-none shrink-0">
       {/* Navigation Main List */}
-      <div className="p-3 space-y-1">
-        <div className="px-3 py-1.5 text-[11px] font-semibold tracking-wider text-neutral-500 uppercase">
+      <div className="p-3 pt-3 space-y-1">
+        <div className="px-3 py-1 text-[11px] font-semibold tracking-wider text-neutral-500 uppercase">
           Main Menu
         </div>
         {navItems.map((item) => {
