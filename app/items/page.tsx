@@ -404,9 +404,8 @@ export default function ItemsPage() {
       const stockCount = Math.floor(20 + (i % 15) * 10);
       const bufferStockCount = 10;
       const isThirdParty = i % 8 === 0;
-      const barcodeId = isThirdParty
-        ? `890${100000000 + i}`
-        : `890123${String(i + 1).padStart(6, "0")}`;
+      // Only Third-Party items include explicit barcode in Excel template. Non-third-party items leave Barcode ID blank to be auto-generated.
+      const barcodeId = isThirdParty ? `890${100000000 + i}` : "";
 
       sampleRows.push({
         "Item Name": name,
@@ -486,9 +485,11 @@ export default function ItemsPage() {
         const thirdPartyRaw = String(row["Is Third Party"] || row["isThirdParty"] || "").toLowerCase();
         const rowThirdParty = thirdPartyRaw === "yes" || thirdPartyRaw === "true" || thirdPartyRaw === "1";
 
-        const rowBarcode =
-          String(row["Barcode ID"] || row["barcodeId"] || row["Barcode"] || "").trim() ||
-          generateNumericBarcode();
+        // Barcode rule: Only third party items keep custom Barcode ID from Excel. Non-third party items ALWAYS get auto-generated unique numeric barcode.
+        const excelBarcodeRaw = String(row["Barcode ID"] || row["barcodeId"] || row["Barcode"] || "").trim();
+        const rowBarcode = rowThirdParty
+          ? (excelBarcodeRaw || generateNumericBarcode())
+          : generateNumericBarcode();
 
         setBulkProgress({
           current: i + 1,

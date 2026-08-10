@@ -42,6 +42,8 @@ import {
   Eye,
   ChevronRight,
   Package,
+  Barcode,
+  ShoppingBag,
 } from "lucide-react";
 
 interface RackItem {
@@ -51,8 +53,7 @@ interface RackItem {
   qrCodeUrl: string;
   imagekitFileId?: string;
   notes?: string;
-  itemCount?: number;
-  assignedItems?: { id: string; name: string; quantity: number }[];
+  assignedItems?: { itemId: string; name: string; barcodeId: string; quantity: number }[];
   createdAt?: any;
 }
 
@@ -62,8 +63,17 @@ interface SerialItem {
   itemName: string;
   qrCodeUrl: string;
   status?: "Available" | "Assigned" | "In Maintenance";
+  assignedItems?: { itemId: string; name: string; barcodeId: string; quantity: number }[];
   notes?: string;
   createdAt?: any;
+}
+
+interface StoreProduct {
+  id: string;
+  name: string;
+  barcodeId: string;
+  price: number;
+  category: string;
 }
 
 export default function UtilitiesPage() {
@@ -116,14 +126,28 @@ export default function UtilitiesPage() {
     step: string;
   } | null>(null);
 
-  // Add Item to Rack Modal State
-  const [addItemRack, setAddItemRack] = useState<RackItem | null>(null);
-  const [newItemName, setNewItemName] = useState("");
-  const [newItemQty, setNewItemQty] = useState(1);
-  const [addingItemToRack, setAddingItemToRack] = useState(false);
+  // Store Products List (from Firestore items collection)
+  const [storeProducts, setStoreProducts] = useState<StoreProduct[]>([]);
 
-  // Move Item Modal State
+  // MULTIPLE Items Add to Rack Modal State
+  const [addItemRack, setAddItemRack] = useState<RackItem | null>(null);
+  const [rackItemsToAdd, setRackItemsToAdd] = useState<
+    { productId: string; quantity: number }[]
+  >([{ productId: "", quantity: 1 }]);
+  const [addingItemsToRack, setAddingItemsToRack] = useState(false);
+
+  // MULTIPLE Items Assign to Serial Modal State
+  const [addItemSerial, setAddItemSerial] = useState<SerialItem | null>(null);
+  const [serialItemsToAdd, setSerialItemsToAdd] = useState<
+    { productId: string; quantity: number }[]
+  >([{ productId: "", quantity: 1 }]);
+  const [addingItemsToSerial, setAddingItemsToSerial] = useState(false);
+
+  // MULTIPLE Items Move Between Racks Modal State
   const [moveRack, setMoveRack] = useState<RackItem | null>(null);
+  const [rackItemsToMove, setRackItemsToMove] = useState<
+    { itemId: string; quantity: number }[]
+  >([{ itemId: "", quantity: 1 }]);
   const [targetRackId, setTargetRackId] = useState("");
   const [movingItems, setMovingItems] = useState(false);
 
@@ -179,11 +203,47 @@ export default function UtilitiesPage() {
       }
     );
 
+    const qItems = query(collection(db, "items"), orderBy("name", "asc"));
+    const unsubscribeItems = onSnapshot(qItems, (snapshot) => {
+      const items: StoreProduct[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        items.push({
+          id: docSnap.id,
+          name: data.name,
+          barcodeId: data.barcodeId,
+          price: data.price,
+          category: data.category,
+        });
+      });
+      setStoreProducts(items);
+    });
+
     return () => {
       unsubscribeRacks();
       unsubscribeSerials();
+      unsubscribeItems();
     };
   }, []);
+
+  // Open Add Items Modal for Rack
+  const handleOpenAddItemsRack = (rack: RackItem) => {
+    setAddItemRack(rack);
+    setRackItemsToAdd([{ productId: "", quantity: 1 }]);
+  };
+
+  // Open Add Items Modal for Serial
+  const handleOpenAddItemsSerial = (serial: SerialItem) => {
+    setAddItemSerial(serial);
+    setSerialItemsToAdd([{ productId: "", quantity: 1 }]);
+  };
+
+  // Open Move Items Modal for Rack
+  const handleOpenMoveItemsRack = (rack: RackItem) => {
+    setMoveRack(rack);
+    setRackItemsToMove([{ itemId: "", quantity: 1 }]);
+    setTargetRackId("");
+  };
 
   // Single Rack Creation
   const handleCreateRack = async (e: React.FormEvent) => {
@@ -343,70 +403,198 @@ export default function UtilitiesPage() {
     }
   };
 
-  // Add Item to Rack Action
-  const handleAddItemToRackSubmit = async (e: React.FormEvent) => {
+  // MULTIPLE Items Add to Rack Handler
+  const handleAddMultipleItemsToRackSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addItemRack || !newItemName.trim()) return;
+    if (!addItemRack) return;
+
+    const validRows = rackItemsToAdd.filter(
+      (r) => r.productId && Number(r.quantity) > 0
+    );
+    if (validRows.length === 0) {
+      alert("Please select at least one valid product and quantity.");
+      return;
+    }
 
     try {
-      setAddingItemToRack(true);
-      const currentItems = addItemRack.assignedItems || [];
-      const updatedItems = [
-        ...currentItems,
-        {
-          id: `item_${Date.now()}`,
-          name: newItemName.trim(),
-          quantity: Number(newItemQty) || 1,
-        },
-      ];
+      setAddingItemsToRack(true);
+      let updatedItems = [...(addItemRack.assignedItems || [])];
+
+      for (const row of validRows) {
+        const prod = storeProducts.find((p) => p.id === row.productId);
+        if (!prod) continue;
+
+        const existingIdx = updatedItems.findIndex((i) => i.itemId === prod.id);
+        const addQty = Number(row.quantity) || 1;
+
+        if (existingIdx >= 0) {
+          updatedItems[existingIdx] = {
+            ...updatedItems[existingIdx],
+            quantity: updatedItems[existingIdx].quantity + addQty,
+          };
+        } else {
+          updatedItems.push({
+            itemId: prod.id,
+            name: prod.name,
+            barcodeId: prod.barcodeId,
+            quantity: addQty,
+          });
+        }
+      }
 
       await updateDoc(doc(db, "racks", addItemRack.id), {
         assignedItems: updatedItems,
       });
 
-      setNewItemName("");
-      setNewItemQty(1);
       setAddItemRack(null);
+      setRackItemsToAdd([{ productId: "", quantity: 1 }]);
     } catch (err: any) {
-      alert(`Failed to add item to rack: ${err.message}`);
+      alert(`Failed to add items to rack: ${err.message}`);
     } finally {
-      setAddingItemToRack(false);
+      setAddingItemsToRack(false);
     }
   };
 
-  // Move Items Action between Racks
-  const handleMoveItemsSubmit = async (e: React.FormEvent) => {
+  // MULTIPLE Items Assign to Serial Handler
+  const handleAddMultipleItemsToSerialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!moveRack || !targetRackId) return;
+    if (!addItemSerial) return;
+
+    const validRows = serialItemsToAdd.filter(
+      (r) => r.productId && Number(r.quantity) > 0
+    );
+    if (validRows.length === 0) {
+      alert("Please select at least one product.");
+      return;
+    }
+
+    try {
+      setAddingItemsToSerial(true);
+      let updatedItems = [...(addItemSerial.assignedItems || [])];
+
+      for (const row of validRows) {
+        const prod = storeProducts.find((p) => p.id === row.productId);
+        if (!prod) continue;
+
+        const existingIdx = updatedItems.findIndex((i) => i.itemId === prod.id);
+        const addQty = Number(row.quantity) || 1;
+
+        if (existingIdx >= 0) {
+          updatedItems[existingIdx] = {
+            ...updatedItems[existingIdx],
+            quantity: updatedItems[existingIdx].quantity + addQty,
+          };
+        } else {
+          updatedItems.push({
+            itemId: prod.id,
+            name: prod.name,
+            barcodeId: prod.barcodeId,
+            quantity: addQty,
+          });
+        }
+      }
+
+      const firstItemName = updatedItems[0]?.name || addItemSerial.itemName;
+
+      await updateDoc(doc(db, "serials", addItemSerial.id), {
+        itemName: firstItemName,
+        assignedItems: updatedItems,
+        status: "Assigned",
+      });
+
+      setAddItemSerial(null);
+      setSerialItemsToAdd([{ productId: "", quantity: 1 }]);
+    } catch (err: any) {
+      alert(`Failed to assign items to serial: ${err.message}`);
+    } finally {
+      setAddingItemsToSerial(false);
+    }
+  };
+
+  // MULTIPLE Items Move Between Racks Handler
+  const handleMoveMultipleItemsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!moveRack || !targetRackId) {
+      alert("Please select target destination rack.");
+      return;
+    }
 
     const targetRack = racks.find((r) => r.id === targetRackId);
-    if (!targetRack) return;
+    if (!targetRack) {
+      alert("Target rack not found.");
+      return;
+    }
+
+    const validMoveRows = rackItemsToMove.filter(
+      (r) => r.itemId && Number(r.quantity) > 0
+    );
+    if (validMoveRows.length === 0) {
+      alert("Please select at least one item to move.");
+      return;
+    }
 
     try {
       setMovingItems(true);
-      const itemsToMove = moveRack.assignedItems || [];
-      if (itemsToMove.length === 0) {
-        alert("This rack has no items to move.");
-        return;
+      let sourceItems = [...(moveRack.assignedItems || [])];
+      let targetItems = [...(targetRack.assignedItems || [])];
+
+      for (const moveRow of validMoveRows) {
+        const sourceIdx = sourceItems.findIndex((i) => i.itemId === moveRow.itemId);
+        if (sourceIdx < 0) continue;
+
+        const itemToMove = sourceItems[sourceIdx];
+        const moveQty = Number(moveRow.quantity) || 1;
+
+        if (moveQty > itemToMove.quantity) {
+          alert(
+            `Cannot move ${moveQty} units of "${itemToMove.name}". Available: ${itemToMove.quantity}`
+          );
+          setMovingItems(false);
+          return;
+        }
+
+        // Deduct from source
+        if (itemToMove.quantity - moveQty === 0) {
+          sourceItems.splice(sourceIdx, 1);
+        } else {
+          sourceItems[sourceIdx] = {
+            ...itemToMove,
+            quantity: itemToMove.quantity - moveQty,
+          };
+        }
+
+        // Add to target
+        const targetIdx = targetItems.findIndex((i) => i.itemId === moveRow.itemId);
+        if (targetIdx >= 0) {
+          targetItems[targetIdx] = {
+            ...targetItems[targetIdx],
+            quantity: targetItems[targetIdx].quantity + moveQty,
+          };
+        } else {
+          targetItems.push({
+            itemId: itemToMove.itemId,
+            name: itemToMove.name,
+            barcodeId: itemToMove.barcodeId,
+            quantity: moveQty,
+          });
+        }
       }
 
-      const targetCurrentItems = targetRack.assignedItems || [];
-      const updatedTargetItems = [...targetCurrentItems, ...itemsToMove];
-
-      // Update target rack with moved items
-      await updateDoc(doc(db, "racks", targetRack.id), {
-        assignedItems: updatedTargetItems,
+      // Update both racks in Firestore
+      await updateDoc(doc(db, "racks", moveRack.id), {
+        assignedItems: sourceItems,
       });
 
-      // Clear items from source rack
-      await updateDoc(doc(db, "racks", moveRack.id), {
-        assignedItems: [],
+      await updateDoc(doc(db, "racks", targetRack.id), {
+        assignedItems: targetItems,
       });
 
       setMoveRack(null);
+      setRackItemsToMove([{ itemId: "", quantity: 1 }]);
       setTargetRackId("");
-      alert(`Successfully moved ${itemsToMove.length} items from ${moveRack.name} to ${targetRack.name}`);
+      alert(`Successfully transferred items to ${targetRack.name}!`);
     } catch (err: any) {
+      console.error("Error moving items:", err);
       alert(`Error moving items: ${err.message}`);
     } finally {
       setMovingItems(false);
@@ -457,6 +645,7 @@ export default function UtilitiesPage() {
         itemName: itemName.trim() || "Uncategorized Item",
         qrCodeUrl: uploadData.url,
         status: "Available",
+        assignedItems: [],
         notes: serialNotes.trim(),
         createdAt: serverTimestamp(),
       });
@@ -551,6 +740,7 @@ export default function UtilitiesPage() {
           itemName: itemLabel,
           qrCodeUrl: uploadData.url,
           status: "Available",
+          assignedItems: [],
           notes: `Bulk generated serial item #${i}`,
           createdAt: serverTimestamp(),
         });
@@ -682,7 +872,6 @@ export default function UtilitiesPage() {
       {/* ==================== TAB 1: RACKS ==================== */}
       {activeTab === "racks" && (
         <div className="space-y-4">
-          {/* Controls Bar with Search, View Mode Switcher, and Add Actions */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-neutral-200/90 shadow-2xs">
             <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
               <div className="relative w-full sm:w-72">
@@ -696,7 +885,6 @@ export default function UtilitiesPage() {
                 />
               </div>
 
-              {/* View Toggle Button */}
               <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-lg border border-neutral-200">
                 <button
                   type="button"
@@ -748,7 +936,6 @@ export default function UtilitiesPage() {
             </div>
           </div>
 
-          {/* Racks Display Container */}
           {loadingRacks ? (
             <div className="bg-white border border-neutral-200/90 rounded-xl p-12 text-center text-neutral-500 flex flex-col items-center justify-center gap-2">
               <Loader2 className="w-6 h-6 animate-spin text-neutral-700" />
@@ -811,7 +998,6 @@ export default function UtilitiesPage() {
                           key={rack.id}
                           className="hover:bg-neutral-50/60 transition-colors group"
                         >
-                          {/* QR Thumbnail */}
                           <td className="py-3 px-4">
                             <button
                               type="button"
@@ -833,7 +1019,6 @@ export default function UtilitiesPage() {
                             </button>
                           </td>
 
-                          {/* Rack Name & Code */}
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">
                               <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
@@ -850,7 +1035,6 @@ export default function UtilitiesPage() {
                             )}
                           </td>
 
-                          {/* Items Count Badge & Preview */}
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">
                               <span
@@ -861,31 +1045,30 @@ export default function UtilitiesPage() {
                                 }`}
                               >
                                 <Package className="w-3 h-3" />
-                                {itemCount} Items ({totalQty} units)
+                                {itemCount} Products ({totalQty} total units)
                               </span>
                             </div>
                           </td>
 
-                          {/* Actions Bar */}
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
-                              {/* Add Item Button */}
+                              {/* Add Multiple Items Button */}
                               <button
                                 type="button"
-                                onClick={() => setAddItemRack(rack)}
+                                onClick={() => handleOpenAddItemsRack(rack)}
                                 className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
-                                title="Add product to this rack"
+                                title="Add multiple items from store to this rack"
                               >
                                 <PackagePlus className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>Add Item</span>
+                                <span>+ Add Items</span>
                               </button>
 
-                              {/* Move Item Button */}
+                              {/* Move Multiple Items Button */}
                               <button
                                 type="button"
-                                onClick={() => setMoveRack(rack)}
+                                onClick={() => handleOpenMoveItemsRack(rack)}
                                 className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
-                                title="Move items between racks"
+                                title="Move items to another rack"
                               >
                                 <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600" />
                                 <span>Move</span>
@@ -972,7 +1155,7 @@ export default function UtilitiesPage() {
                       <button
                         type="button"
                         onClick={() => handleDeleteRack(rack.id)}
-                        className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                         title="Delete Rack"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1007,11 +1190,11 @@ export default function UtilitiesPage() {
                   <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-1">
                     <button
                       type="button"
-                      onClick={() => setAddItemRack(rack)}
+                      onClick={() => handleOpenAddItemsRack(rack)}
                       className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       <PackagePlus className="w-3.5 h-3.5" />
-                      <span>Add Item</span>
+                      <span>+ Add Items</span>
                     </button>
                     <button
                       type="button"
@@ -1144,7 +1327,7 @@ export default function UtilitiesPage() {
                     <tr className="bg-neutral-50/80 border-b border-neutral-200/80 text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
                       <th className="py-3 px-4 w-20">QR Tag</th>
                       <th className="py-3 px-4">Serial Number</th>
-                      <th className="py-3 px-4">Associated Item / Batch</th>
+                      <th className="py-3 px-4">Associated Items</th>
                       <th className="py-3 px-4">Status</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
@@ -1182,18 +1365,42 @@ export default function UtilitiesPage() {
                           </span>
                         </td>
 
-                        <td className="py-3 px-4 font-bold text-neutral-900">
-                          {s.itemName}
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-neutral-900">
+                            {s.itemName}
+                          </div>
+                          {s.assignedItems && s.assignedItems.length > 0 && (
+                            <div className="text-[10px] text-neutral-500 mt-0.5 font-mono">
+                              {s.assignedItems.length} products assigned
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-3 px-4">
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                            Available
+                          <span
+                            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                              s.status === "Assigned"
+                                ? "bg-purple-50 text-purple-800 border-purple-200"
+                                : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                            }`}
+                          >
+                            {s.status || "Available"}
                           </span>
                         </td>
 
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {/* Assign Multiple Items to Serial */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddItemsSerial(s)}
+                              className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                              title="Assign products from items list to this serial"
+                            >
+                              <PackagePlus className="w-3.5 h-3.5 text-blue-600" />
+                              <span>+ Assign Items</span>
+                            </button>
+
                             <button
                               type="button"
                               onClick={() =>
@@ -1278,18 +1485,12 @@ export default function UtilitiesPage() {
                   <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-1">
                     <button
                       type="button"
-                      onClick={() =>
-                        handleDownloadQR(
-                          s.qrCodeUrl,
-                          `SN_${s.serialNumber}_QR.png`
-                        )
-                      }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-100 hover:bg-neutral-200/80 text-neutral-800 rounded-lg text-xs font-semibold cursor-pointer"
+                      onClick={() => handleOpenAddItemsSerial(s)}
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-blue-50 text-blue-800 border border-blue-200 rounded-lg text-xs font-semibold cursor-pointer"
                     >
-                      <Download className="w-3.5 h-3.5 text-neutral-600" />
-                      <span>Download</span>
+                      <PackagePlus className="w-3.5 h-3.5" />
+                      <span>Assign Items</span>
                     </button>
-
                     <button
                       type="button"
                       onClick={() =>
@@ -1299,7 +1500,7 @@ export default function UtilitiesPage() {
                           qrCodeUrl: s.qrCodeUrl,
                         })
                       }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       <Printer className="w-3.5 h-3.5" />
                       <span>Print Tag</span>
@@ -1347,18 +1548,18 @@ export default function UtilitiesPage() {
         </div>
       )}
 
-      {/* ==================== ADD ITEM TO RACK MODAL ==================== */}
+      {/* ==================== ADD MULTIPLE ITEMS TO RACK MODAL ==================== */}
       {addItemRack && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200 my-8">
             <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-emerald-50/60">
               <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-800">
+                <div className="p-2 rounded-lg bg-emerald-600 text-white">
                   <PackagePlus className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-neutral-900">
-                    Add Product to {addItemRack.name}
+                    Add Items to {addItemRack.name}
                   </h3>
                   <p className="text-[11px] text-neutral-500 font-mono">
                     Rack Code: {addItemRack.code}
@@ -1374,57 +1575,109 @@ export default function UtilitiesPage() {
               </button>
             </div>
 
-            <form onSubmit={handleAddItemToRackSubmit} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  Product / Item Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Kaju Katli (1 KG)"
-                  value={newItemName}
-                  onChange={(e) => setNewItemName(e.target.value)}
-                  disabled={addingItemToRack}
-                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800"
-                />
-              </div>
+            <form onSubmit={handleAddMultipleItemsToRackSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-700">
+                    Select Products & Quantities
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRackItemsToAdd((prev) => [
+                        ...prev,
+                        { productId: "", quantity: 1 },
+                      ])
+                    }
+                    className="flex items-center gap-1 text-xs font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Another Item</span>
+                  </button>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  Quantity / Packets
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  required
-                  value={newItemQty}
-                  onChange={(e) => setNewItemQty(Number(e.target.value))}
-                  disabled={addingItemToRack}
-                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
-                />
+                {rackItemsToAdd.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2 p-2 bg-neutral-50 rounded-xl border border-neutral-200"
+                  >
+                    <select
+                      required
+                      value={row.productId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setRackItemsToAdd((prev) =>
+                          prev.map((r, i) =>
+                            i === idx ? { ...r, productId: val } : r
+                          )
+                        );
+                      }}
+                      disabled={addingItemsToRack}
+                      className="flex-1 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
+                    >
+                      <option value="">-- Select Product --</option>
+                      {storeProducts.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.barcodeId}) - ₹{p.price}
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="number"
+                      min={1}
+                      required
+                      placeholder="Qty"
+                      value={row.quantity}
+                      onChange={(e) => {
+                        const qty = Number(e.target.value);
+                        setRackItemsToAdd((prev) =>
+                          prev.map((r, i) =>
+                            i === idx ? { ...r, quantity: qty } : r
+                          )
+                        );
+                      }}
+                      disabled={addingItemsToRack}
+                      className="w-20 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none font-mono text-center"
+                    />
+
+                    {rackItemsToAdd.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRackItemsToAdd((prev) =>
+                            prev.filter((_, i) => i !== idx)
+                          )
+                        }
+                        className="p-1.5 text-neutral-400 hover:text-red-600 rounded-lg cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
 
               <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setAddItemRack(null)}
-                  disabled={addingItemToRack}
+                  disabled={addingItemsToRack}
                   className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={addingItemToRack || !newItemName.trim()}
+                  disabled={addingItemsToRack}
                   className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
                 >
-                  {addingItemToRack ? (
+                  {addingItemsToRack ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
                     <PackagePlus className="w-3.5 h-3.5" />
                   )}
-                  <span>Store in Rack</span>
+                  <span>Store All Items in Rack</span>
                 </button>
               </div>
             </form>
@@ -1432,13 +1685,147 @@ export default function UtilitiesPage() {
         </div>
       )}
 
-      {/* ==================== MOVE ITEMS MODAL ==================== */}
-      {moveRack && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+      {/* ==================== ASSIGN MULTIPLE ITEMS TO SERIAL MODAL ==================== */}
+      {addItemSerial && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200 my-8">
             <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60">
               <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-blue-500/20 text-blue-800">
+                <div className="p-2 rounded-lg bg-blue-600 text-white">
+                  <PackagePlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Assign Items to Serial {addItemSerial.serialNumber}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddItemSerial(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddMultipleItemsToSerialSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-700">
+                    Select Products to Assign
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSerialItemsToAdd((prev) => [
+                        ...prev,
+                        { productId: "", quantity: 1 },
+                      ])
+                    }
+                    className="flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Another Item</span>
+                  </button>
+                </div>
+
+                {serialItemsToAdd.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2 p-2 bg-neutral-50 rounded-xl border border-neutral-200"
+                  >
+                    <select
+                      required
+                      value={row.productId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSerialItemsToAdd((prev) =>
+                          prev.map((r, i) =>
+                            i === idx ? { ...r, productId: val } : r
+                          )
+                        );
+                      }}
+                      disabled={addingItemsToSerial}
+                      className="flex-1 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
+                    >
+                      <option value="">-- Select Product --</option>
+                      {storeProducts.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.barcodeId})
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="number"
+                      min={1}
+                      required
+                      placeholder="Qty"
+                      value={row.quantity}
+                      onChange={(e) => {
+                        const qty = Number(e.target.value);
+                        setSerialItemsToAdd((prev) =>
+                          prev.map((r, i) =>
+                            i === idx ? { ...r, quantity: qty } : r
+                          )
+                        );
+                      }}
+                      disabled={addingItemsToSerial}
+                      className="w-20 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none font-mono text-center"
+                    />
+
+                    {serialItemsToAdd.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSerialItemsToAdd((prev) =>
+                            prev.filter((_, i) => i !== idx)
+                          )
+                        }
+                        className="p-1.5 text-neutral-400 hover:text-red-600 rounded-lg cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddItemSerial(null)}
+                  disabled={addingItemsToSerial}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingItemsToSerial}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                >
+                  {addingItemsToSerial ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <PackagePlus className="w-3.5 h-3.5" />
+                  )}
+                  <span>Assign to Serial Tag</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MOVE MULTIPLE ITEMS BETWEEN RACKS MODAL ==================== */}
+      {moveRack && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200 my-8">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-blue-600 text-white">
                   <ArrowLeftRight className="w-5 h-5" />
                 </div>
                 <div>
@@ -1446,7 +1833,7 @@ export default function UtilitiesPage() {
                     Move Items from {moveRack.name}
                   </h3>
                   <p className="text-[11px] text-neutral-500">
-                    Transfer stored items to a target rack
+                    Transfer multiple items to another rack
                   </p>
                 </div>
               </div>
@@ -1459,16 +1846,8 @@ export default function UtilitiesPage() {
               </button>
             </div>
 
-            <form onSubmit={handleMoveItemsSubmit} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  Source Rack
-                </label>
-                <div className="p-2.5 bg-neutral-100 rounded-lg text-xs font-semibold text-neutral-800 border border-neutral-200">
-                  {moveRack.name} ({moveRack.assignedItems?.length || 0} items stored)
-                </div>
-              </div>
-
+            <form onSubmit={handleMoveMultipleItemsSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              {/* Destination Target Rack */}
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1">
                   Select Destination Target Rack <span className="text-red-500">*</span>
@@ -1477,7 +1856,8 @@ export default function UtilitiesPage() {
                   required
                   value={targetRackId}
                   onChange={(e) => setTargetRackId(e.target.value)}
-                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none"
+                  disabled={movingItems}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
                 >
                   <option value="">-- Choose Target Rack --</option>
                   {racks
@@ -1490,25 +1870,129 @@ export default function UtilitiesPage() {
                 </select>
               </div>
 
+              {/* Items to Move Rows */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-700">
+                    Items & Quantities to Move
+                  </span>
+                  {moveRack.assignedItems && moveRack.assignedItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRackItemsToMove((prev) => [
+                          ...prev,
+                          { itemId: "", quantity: 1 },
+                        ])
+                      }
+                      className="flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Another Item to Move</span>
+                    </button>
+                  )}
+                </div>
+
+                {moveRack.assignedItems && moveRack.assignedItems.length > 0 ? (
+                  rackItemsToMove.map((row, idx) => {
+                    const selectedItem = moveRack.assignedItems?.find(
+                      (i) => i.itemId === row.itemId
+                    );
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 p-2 bg-neutral-50 rounded-xl border border-neutral-200"
+                      >
+                        <select
+                          required
+                          value={row.itemId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRackItemsToMove((prev) =>
+                              prev.map((r, i) =>
+                                i === idx ? { ...r, itemId: val } : r
+                              )
+                            );
+                          }}
+                          disabled={movingItems}
+                          className="flex-1 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">-- Select Stored Item --</option>
+                          {moveRack.assignedItems?.map((item) => (
+                            <option key={item.itemId} value={item.itemId}>
+                              {item.name} ({item.quantity} available)
+                            </option>
+                          ))}
+                        </select>
+
+                        <input
+                          type="number"
+                          min={1}
+                          max={selectedItem?.quantity || 1}
+                          required
+                          placeholder="Qty"
+                          value={row.quantity}
+                          onChange={(e) => {
+                            const qty = Number(e.target.value);
+                            setRackItemsToMove((prev) =>
+                              prev.map((r, i) =>
+                                i === idx ? { ...r, quantity: qty } : r
+                              )
+                            );
+                          }}
+                          disabled={movingItems}
+                          className="w-20 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none font-mono text-center"
+                        />
+
+                        {rackItemsToMove.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRackItemsToMove((prev) =>
+                                prev.filter((_, i) => i !== idx)
+                              )
+                            }
+                            className="p-1.5 text-neutral-400 hover:text-red-600 rounded-lg cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 text-xs font-medium">
+                    This rack currently has 0 items stored. Add products to this rack first.
+                  </div>
+                )}
+              </div>
+
               <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setMoveRack(null)}
+                  disabled={movingItems}
                   className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={movingItems || !targetRackId}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                  disabled={
+                    movingItems ||
+                    !targetRackId ||
+                    !moveRack.assignedItems ||
+                    moveRack.assignedItems.length === 0
+                  }
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
                 >
                   {movingItems ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
                     <ArrowLeftRight className="w-3.5 h-3.5" />
                   )}
-                  <span>Confirm Move Items</span>
+                  <span>Transfer Items Now</span>
                 </button>
               </div>
             </form>
@@ -1527,7 +2011,7 @@ export default function UtilitiesPage() {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-neutral-900">
-                    {viewRack.name} Contents
+                    {viewRack.name} Stored Products
                   </h3>
                   <p className="text-[11px] text-neutral-500 font-mono">
                     RACK CODE: {viewRack.code}
@@ -1545,21 +2029,25 @@ export default function UtilitiesPage() {
 
             <div className="p-5 space-y-4">
               {viewRack.assignedItems && viewRack.assignedItems.length > 0 ? (
-                <div className="border border-neutral-200 rounded-xl overflow-hidden">
+                <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-2xs">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-neutral-100 text-neutral-600 font-bold uppercase text-[10px]">
                       <tr>
-                        <th className="py-2.5 px-3">Item Name</th>
+                        <th className="py-2.5 px-3">Product Name</th>
+                        <th className="py-2.5 px-3">Barcode</th>
                         <th className="py-2.5 px-3 text-right">Quantity</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200">
                       {viewRack.assignedItems.map((item, idx) => (
-                        <tr key={idx}>
+                        <tr key={idx} className="hover:bg-neutral-50">
                           <td className="py-2.5 px-3 font-semibold text-neutral-900">
                             {item.name}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-800">
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-500">
+                            {item.barcodeId}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900">
                             {item.quantity} units
                           </td>
                         </tr>
@@ -1574,7 +2062,7 @@ export default function UtilitiesPage() {
                     No items currently stored in this rack
                   </p>
                   <p className="text-[11px] text-neutral-400 mt-0.5">
-                    Click "Add Item" in the rack row to assign products.
+                    Click "+ Add Items" in the rack row to select products from your store.
                   </p>
                 </div>
               )}
