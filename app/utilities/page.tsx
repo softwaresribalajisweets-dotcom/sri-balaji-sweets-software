@@ -26,12 +26,14 @@ import {
   Check,
   Loader2,
   Box,
+  Boxes,
   Hash,
   Sliders,
   X,
   ExternalLink,
   Layers,
   Sparkles,
+  Layers3,
 } from "lucide-react";
 
 interface RackItem {
@@ -68,6 +70,18 @@ export default function UtilitiesPage() {
   const [savingRack, setSavingRack] = useState(false);
   const [saveStep, setSaveStep] = useState("");
 
+  // Bulk Racks State
+  const [isBulkRackOpen, setIsBulkRackOpen] = useState(false);
+  const [bulkRackPrefix, setBulkRackPrefix] = useState("Rack ");
+  const [bulkRackStart, setBulkRackStart] = useState<number | "">(1);
+  const [bulkRackEnd, setBulkRackEnd] = useState<number | "">(5);
+  const [bulkRackSaving, setBulkRackSaving] = useState(false);
+  const [bulkRackProgress, setBulkRackProgress] = useState<{
+    current: number;
+    total: number;
+    step: string;
+  } | null>(null);
+
   // Serial Numbers State
   const [serials, setSerials] = useState<SerialItem[]>([]);
   const [loadingSerials, setLoadingSerials] = useState(true);
@@ -77,7 +91,20 @@ export default function UtilitiesPage() {
   const [serialNotes, setSerialNotes] = useState("");
   const [savingSerial, setSavingSerial] = useState(false);
 
-  // Filter State
+  // Bulk Serials State
+  const [isBulkSerialOpen, setIsBulkSerialOpen] = useState(false);
+  const [bulkSerialPrefix, setBulkSerialPrefix] = useState("SN-2026-");
+  const [bulkSerialItemName, setBulkSerialItemName] = useState("Sweet Item");
+  const [bulkSerialStart, setBulkSerialStart] = useState<number | "">(1);
+  const [bulkSerialEnd, setBulkSerialEnd] = useState<number | "">(5);
+  const [bulkSerialSaving, setBulkSerialSaving] = useState(false);
+  const [bulkSerialProgress, setBulkSerialProgress] = useState<{
+    current: number;
+    total: number;
+    step: string;
+  } | null>(null);
+
+  // Filter & Search State
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -90,7 +117,6 @@ export default function UtilitiesPage() {
 
   // Subscribe to Realtime Firestore collections
   useEffect(() => {
-    // Racks snapshot listener
     const qRacks = query(collection(db, "racks"), orderBy("createdAt", "desc"));
     const unsubscribeRacks = onSnapshot(
       qRacks,
@@ -108,7 +134,6 @@ export default function UtilitiesPage() {
       }
     );
 
-    // Serials snapshot listener
     const qSerials = query(
       collection(db, "serials"),
       orderBy("createdAt", "desc")
@@ -135,7 +160,7 @@ export default function UtilitiesPage() {
     };
   }, []);
 
-  // Handle Add Rack Submission
+  // Single Rack Creation
   const handleCreateRack = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!rackName.trim()) return;
@@ -147,7 +172,6 @@ export default function UtilitiesPage() {
         rackCode.trim() ||
         `RCK-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      // Step 1: Generate QR Code locally
       setSaveStep("Generating QR code...");
       const qrPayload = JSON.stringify({
         type: "RACK",
@@ -159,13 +183,9 @@ export default function UtilitiesPage() {
       const qrDataUrl = await QRCode.toDataURL(qrPayload, {
         width: 400,
         margin: 2,
-        color: {
-          dark: "#0d0d0d",
-          light: "#ffffff",
-        },
+        color: { dark: "#0d0d0d", light: "#ffffff" },
       });
 
-      // Step 2: Upload QR image to ImageKit
       setSaveStep("Uploading QR code to ImageKit...");
       const uploadRes = await fetch("/api/upload-imagekit", {
         method: "POST",
@@ -182,8 +202,7 @@ export default function UtilitiesPage() {
         throw new Error(uploadData.error || "ImageKit upload failed");
       }
 
-      // Step 3: Save metadata with ImageKit URL into Firebase Firestore
-      setSaveStep("Saving Rack details to Firebase...");
+      setSaveStep("Saving Rack to Firebase...");
       await addDoc(collection(db, "racks"), {
         name: rackName.trim(),
         code: generatedCode,
@@ -193,7 +212,6 @@ export default function UtilitiesPage() {
         createdAt: serverTimestamp(),
       });
 
-      // Reset form & close modal
       setRackName("");
       setRackCode("");
       setRackNotes("");
@@ -207,7 +225,104 @@ export default function UtilitiesPage() {
     }
   };
 
-  // Handle Add Serial Number Submission
+  // Bulk Create Racks Handler
+  const handleBulkCreateRacks = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const start = Number(bulkRackStart);
+    const end = Number(bulkRackEnd);
+
+    if (isNaN(start) || isNaN(end) || start > end || start < 1) {
+      alert("Please enter a valid starting and ending count range.");
+      return;
+    }
+
+    const total = end - start + 1;
+    if (total > 50) {
+      if (!confirm(`You are creating ${total} racks. This may take a minute. Continue?`)) {
+        return;
+      }
+    }
+
+    try {
+      setBulkRackSaving(true);
+
+      for (let i = start; i <= end; i++) {
+        const countIdx = i - start + 1;
+        const rName = `${bulkRackPrefix.trim()} ${i}`.trim();
+        const rCode = `RCK-${i}`;
+
+        setBulkRackProgress({
+          current: countIdx,
+          total,
+          step: `Generating QR for ${rName}...`,
+        });
+
+        // 1. Generate QR Code
+        const qrPayload = JSON.stringify({
+          type: "RACK",
+          code: rCode,
+          name: rName,
+          index: i,
+          timestamp: Date.now(),
+        });
+
+        const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+          width: 400,
+          margin: 2,
+          color: { dark: "#0d0d0d", light: "#ffffff" },
+        });
+
+        // 2. Upload to ImageKit
+        setBulkRackProgress({
+          current: countIdx,
+          total,
+          step: `Uploading ${rName} QR to ImageKit...`,
+        });
+
+        const uploadRes = await fetch("/api/upload-imagekit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file: qrDataUrl,
+            fileName: `rack_${rCode}_qr.png`,
+            folder: "/racks_qr",
+          }),
+        });
+
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok || !uploadData.url) {
+          throw new Error(`Failed to upload ${rName}: ${uploadData.error}`);
+        }
+
+        // 3. Save to Firestore
+        setBulkRackProgress({
+          current: countIdx,
+          total,
+          step: `Saving ${rName} to Firebase...`,
+        });
+
+        await addDoc(collection(db, "racks"), {
+          name: rName,
+          code: rCode,
+          qrCodeUrl: uploadData.url,
+          imagekitFileId: uploadData.fileId || "",
+          notes: `Bulk created item #${i}`,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      setIsBulkRackOpen(false);
+      setBulkRackProgress(null);
+    } catch (err: any) {
+      console.error("Bulk create racks error:", err);
+      alert(`Bulk create error: ${err.message}`);
+    } finally {
+      setBulkRackSaving(false);
+      setBulkRackProgress(null);
+    }
+  };
+
+  // Single Serial Creation
   const handleCreateSerial = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!serialNumber.trim()) return;
@@ -226,10 +341,7 @@ export default function UtilitiesPage() {
       const qrDataUrl = await QRCode.toDataURL(qrPayload, {
         width: 400,
         margin: 2,
-        color: {
-          dark: "#0d0d0d",
-          light: "#ffffff",
-        },
+        color: { dark: "#0d0d0d", light: "#ffffff" },
       });
 
       setSaveStep("Uploading to ImageKit...");
@@ -270,7 +382,101 @@ export default function UtilitiesPage() {
     }
   };
 
-  // Delete Rack from Firestore
+  // Bulk Create Serials Handler
+  const handleBulkCreateSerials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const start = Number(bulkSerialStart);
+    const end = Number(bulkSerialEnd);
+
+    if (isNaN(start) || isNaN(end) || start > end || start < 1) {
+      alert("Please enter a valid starting and ending count range.");
+      return;
+    }
+
+    const total = end - start + 1;
+    if (total > 50) {
+      if (!confirm(`You are creating ${total} serial numbers. Continue?`)) {
+        return;
+      }
+    }
+
+    try {
+      setBulkSerialSaving(true);
+
+      for (let i = start; i <= end; i++) {
+        const countIdx = i - start + 1;
+        const formattedNum = String(i).padStart(3, "0");
+        const snCode = `${bulkSerialPrefix.trim()}${formattedNum}`;
+        const itemLabel = `${bulkSerialItemName.trim()} #${i}`;
+
+        setBulkSerialProgress({
+          current: countIdx,
+          total,
+          step: `Generating QR for ${snCode}...`,
+        });
+
+        const qrPayload = JSON.stringify({
+          type: "SERIAL",
+          sn: snCode,
+          item: itemLabel,
+          index: i,
+          timestamp: Date.now(),
+        });
+
+        const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+          width: 400,
+          margin: 2,
+          color: { dark: "#0d0d0d", light: "#ffffff" },
+        });
+
+        setBulkSerialProgress({
+          current: countIdx,
+          total,
+          step: `Uploading ${snCode} QR to ImageKit...`,
+        });
+
+        const uploadRes = await fetch("/api/upload-imagekit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file: qrDataUrl,
+            fileName: `sn_${snCode}_qr.png`,
+            folder: "/serials_qr",
+          }),
+        });
+
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok || !uploadData.url) {
+          throw new Error(`Failed to upload ${snCode}: ${uploadData.error}`);
+        }
+
+        setBulkSerialProgress({
+          current: countIdx,
+          total,
+          step: `Saving ${snCode} to Firebase...`,
+        });
+
+        await addDoc(collection(db, "serials"), {
+          serialNumber: snCode,
+          itemName: itemLabel,
+          qrCodeUrl: uploadData.url,
+          notes: `Bulk generated serial item #${i}`,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      setIsBulkSerialOpen(false);
+      setBulkSerialProgress(null);
+    } catch (err: any) {
+      console.error("Bulk create serials error:", err);
+      alert(`Bulk create error: ${err.message}`);
+    } finally {
+      setBulkSerialSaving(false);
+      setBulkSerialProgress(null);
+    }
+  };
+
+  // Delete Rack
   const handleDeleteRack = async (rackId: string) => {
     if (confirm("Are you sure you want to delete this rack?")) {
       try {
@@ -281,7 +487,7 @@ export default function UtilitiesPage() {
     }
   };
 
-  // Delete Serial from Firestore
+  // Delete Serial
   const handleDeleteSerial = async (serialId: string) => {
     if (confirm("Are you sure you want to delete this serial number?")) {
       try {
@@ -301,13 +507,6 @@ export default function UtilitiesPage() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  };
-
-  // Copy URL to Clipboard
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
   };
 
   // Filtered lists
@@ -406,14 +605,25 @@ export default function UtilitiesPage() {
               />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setIsAddRackOpen(true)}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Rack</span>
-            </button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setIsBulkRackOpen(true)}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-neutral-100 hover:bg-neutral-200/80 border border-neutral-300 text-neutral-800 text-xs font-semibold rounded-lg shadow-2xs transition-all cursor-pointer"
+              >
+                <Boxes className="w-4 h-4 text-amber-700" />
+                <span>Bulk Create Racks</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsAddRackOpen(true)}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Rack</span>
+              </button>
+            </div>
           </div>
 
           {/* Racks Grid Container */}
@@ -431,16 +641,26 @@ export default function UtilitiesPage() {
                 No Racks Configured
               </h3>
               <p className="text-xs text-neutral-500 max-w-sm mb-5">
-                Click "Add Rack" to create your first inventory rack. A unique QR code will be generated and uploaded to ImageKit automatically.
+                Click "Add Rack" or "Bulk Create Racks" to generate QR codes uploaded automatically to ImageKit.
               </p>
-              <button
-                type="button"
-                onClick={() => setIsAddRackOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Your First Rack</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkRackOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-neutral-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  <Boxes className="w-4 h-4 text-amber-700" />
+                  <span>Bulk Create</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddRackOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Single Rack</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -450,7 +670,6 @@ export default function UtilitiesPage() {
                   className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between"
                 >
                   <div>
-                    {/* Rack Header */}
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 font-mono">
@@ -470,7 +689,6 @@ export default function UtilitiesPage() {
                       </button>
                     </div>
 
-                    {/* ImageKit QR Image Card */}
                     <div className="bg-neutral-50 border border-neutral-200/80 rounded-lg p-3 flex flex-col items-center justify-center my-3 relative group">
                       {rack.qrCodeUrl ? (
                         <img
@@ -496,7 +714,6 @@ export default function UtilitiesPage() {
                     )}
                   </div>
 
-                  {/* Actions Footer */}
                   <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-1">
                     <button
                       type="button"
@@ -506,7 +723,7 @@ export default function UtilitiesPage() {
                           `Rack_${rack.code}_QR.png`
                         )
                       }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-100 hover:bg-neutral-200/80 text-neutral-800 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-100 hover:bg-neutral-200/80 text-neutral-800 rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       <Download className="w-3.5 h-3.5 text-neutral-600" />
                       <span>Download</span>
@@ -521,7 +738,7 @@ export default function UtilitiesPage() {
                           qrCodeUrl: rack.qrCodeUrl,
                         })
                       }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       <Printer className="w-3.5 h-3.5" />
                       <span>Print Tag</span>
@@ -549,14 +766,25 @@ export default function UtilitiesPage() {
               />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setIsAddSerialOpen(true)}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Serial Number</span>
-            </button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setIsBulkSerialOpen(true)}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-neutral-100 hover:bg-neutral-200/80 border border-neutral-300 text-neutral-800 text-xs font-semibold rounded-lg shadow-2xs transition-all cursor-pointer"
+              >
+                <Layers3 className="w-4 h-4 text-blue-700" />
+                <span>Bulk Create Serials</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsAddSerialOpen(true)}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Serial Number</span>
+              </button>
+            </div>
           </div>
 
           {loadingSerials ? (
@@ -575,14 +803,24 @@ export default function UtilitiesPage() {
               <p className="text-xs text-neutral-500 max-w-sm mb-5">
                 Generate Serial Number QR codes for batch tracking and item tags.
               </p>
-              <button
-                type="button"
-                onClick={() => setIsAddSerialOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Serial Number</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkSerialOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-neutral-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  <Layers3 className="w-4 h-4 text-blue-700" />
+                  <span>Bulk Create</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddSerialOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Single Serial</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -604,7 +842,7 @@ export default function UtilitiesPage() {
                       <button
                         type="button"
                         onClick={() => handleDeleteSerial(s.id)}
-                        className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -691,10 +929,330 @@ export default function UtilitiesPage() {
         </div>
       )}
 
-      {/* ==================== ADD RACK MODAL ==================== */}
+      {/* ==================== BULK RACK MODAL ==================== */}
+      {isBulkRackOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-amber-50/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-amber-500/20 text-amber-800">
+                  <Boxes className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Bulk Create Racks
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Generate multiple rack QR codes automatically
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !bulkRackSaving && setIsBulkRackOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBulkCreateRacks} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Rack Name Prefix
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Rack "
+                  value={bulkRackPrefix}
+                  onChange={(e) => setBulkRackPrefix(e.target.value)}
+                  disabled={bulkRackSaving}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800"
+                />
+                <span className="text-[10px] text-neutral-400 mt-1 block">
+                  Example preview: "{bulkRackPrefix.trim()} 1", "{bulkRackPrefix.trim()} 2"...
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Start Count <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={bulkRackStart}
+                    onChange={(e) =>
+                      setBulkRackStart(
+                        e.target.value === "" ? "" : Number(e.target.value)
+                      )
+                    }
+                    disabled={bulkRackSaving}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    End Count <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={bulkRackEnd}
+                    onChange={(e) =>
+                      setBulkRackEnd(
+                        e.target.value === "" ? "" : Number(e.target.value)
+                      )
+                    }
+                    disabled={bulkRackSaving}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              {bulkRackProgress && (
+                <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-amber-900">
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-700" />
+                      Creating Racks...
+                    </span>
+                    <span>
+                      {bulkRackProgress.current} / {bulkRackProgress.total}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-amber-200/80 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-600 transition-all duration-300 rounded-full"
+                      style={{
+                        width: `${
+                          (bulkRackProgress.current / bulkRackProgress.total) *
+                          100
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-amber-800 font-mono truncate">
+                    {bulkRackProgress.step}
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkRackOpen(false)}
+                  disabled={bulkRackSaving}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    bulkRackSaving ||
+                    bulkRackStart === "" ||
+                    bulkRackEnd === "" ||
+                    Number(bulkRackStart) > Number(bulkRackEnd)
+                  }
+                  className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {bulkRackSaving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Boxes className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    Bulk Create (
+                    {Number(bulkRackEnd) >= Number(bulkRackStart)
+                      ? Number(bulkRackEnd) - Number(bulkRackStart) + 1
+                      : 0}{" "}
+                    Racks)
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== BULK SERIAL MODAL ==================== */}
+      {isBulkSerialOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-blue-500/20 text-blue-800">
+                  <Layers3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Bulk Create Serial Numbers
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Generate sequential Serial Number QR tags
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !bulkSerialSaving && setIsBulkSerialOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBulkCreateSerials} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Serial Prefix
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. SN-2026-"
+                  value={bulkSerialPrefix}
+                  onChange={(e) => setBulkSerialPrefix(e.target.value)}
+                  disabled={bulkSerialSaving}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Item / Batch Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sweet Item"
+                  value={bulkSerialItemName}
+                  onChange={(e) => setBulkSerialItemName(e.target.value)}
+                  disabled={bulkSerialSaving}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-800"
+                />
+                <span className="text-[10px] text-neutral-400 mt-1 block">
+                  Example preview: "{bulkSerialPrefix.trim()}001" for "{bulkSerialItemName.trim()} #1"
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Start Count <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={bulkSerialStart}
+                    onChange={(e) =>
+                      setBulkSerialStart(
+                        e.target.value === "" ? "" : Number(e.target.value)
+                      )
+                    }
+                    disabled={bulkSerialSaving}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    End Count <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={bulkSerialEnd}
+                    onChange={(e) =>
+                      setBulkSerialEnd(
+                        e.target.value === "" ? "" : Number(e.target.value)
+                      )
+                    }
+                    disabled={bulkSerialSaving}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              {bulkSerialProgress && (
+                <div className="p-3.5 bg-blue-50 rounded-xl border border-blue-200 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-blue-900">
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-700" />
+                      Creating Serials...
+                    </span>
+                    <span>
+                      {bulkSerialProgress.current} / {bulkSerialProgress.total}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-blue-200/80 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 transition-all duration-300 rounded-full"
+                      style={{
+                        width: `${
+                          (bulkSerialProgress.current /
+                            bulkSerialProgress.total) *
+                          100
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-blue-800 font-mono truncate">
+                    {bulkSerialProgress.step}
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkSerialOpen(false)}
+                  disabled={bulkSerialSaving}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    bulkSerialSaving ||
+                    bulkSerialStart === "" ||
+                    bulkSerialEnd === "" ||
+                    Number(bulkSerialStart) > Number(bulkSerialEnd)
+                  }
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {bulkSerialSaving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Layers3 className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    Bulk Create (
+                    {Number(bulkSerialEnd) >= Number(bulkSerialStart)
+                      ? Number(bulkSerialEnd) - Number(bulkSerialStart) + 1
+                      : 0}{" "}
+                    Serials)
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== SINGLE ADD RACK MODAL ==================== */}
       {isAddRackOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 border border-neutral-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
             <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-neutral-50/50">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-lg bg-amber-500/10 text-amber-700">
@@ -707,7 +1265,7 @@ export default function UtilitiesPage() {
               <button
                 type="button"
                 onClick={() => !savingRack && setIsAddRackOpen(false)}
-                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg"
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -769,14 +1327,14 @@ export default function UtilitiesPage() {
                   type="button"
                   onClick={() => setIsAddRackOpen(false)}
                   disabled={savingRack}
-                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900"
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingRack || !rackName.trim()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
                 >
                   {savingRack ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -791,7 +1349,7 @@ export default function UtilitiesPage() {
         </div>
       )}
 
-      {/* ==================== ADD SERIAL NO MODAL ==================== */}
+      {/* ==================== SINGLE ADD SERIAL NO MODAL ==================== */}
       {isAddSerialOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
@@ -807,7 +1365,7 @@ export default function UtilitiesPage() {
               <button
                 type="button"
                 onClick={() => !savingSerial && setIsAddSerialOpen(false)}
-                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg"
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -855,14 +1413,14 @@ export default function UtilitiesPage() {
                   type="button"
                   onClick={() => setIsAddSerialOpen(false)}
                   disabled={savingSerial}
-                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900"
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingSerial || !serialNumber.trim()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
                 >
                   {savingSerial ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -899,7 +1457,7 @@ export default function UtilitiesPage() {
               />
 
               <p className="text-[9px] text-neutral-400 font-mono">
-                Scan with POS app to view rack contents
+                Scan with POS app to view item details
               </p>
             </div>
 
