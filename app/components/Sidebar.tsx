@@ -49,6 +49,11 @@ const navItems: NavItem[] = [
     icon: FolderTree,
   },
   {
+    name: "Stores",
+    href: "/stores",
+    icon: Store,
+  },
+  {
     name: "Utilities",
     href: "/utilities",
     icon: Wrench,
