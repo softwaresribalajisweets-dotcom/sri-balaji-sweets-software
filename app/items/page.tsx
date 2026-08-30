@@ -33,6 +33,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Eye,
   Pencil,
   Save,
@@ -45,6 +47,7 @@ interface ItemProduct {
   name: string;
   price: number;
   category: string;
+  unit?: string;
   hsnCode: string;
   gstPercent: number;
   stockCount: number;
@@ -77,6 +80,7 @@ export default function ItemsPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [price, setPrice] = useState<number | "">("");
+  const [unit, setUnit] = useState<string>("KG");
   const [category, setCategory] = useState("");
   const [customCategory, setCustomCategory] = useState("");
   const [hsnCode, setHsnCode] = useState("2106");
@@ -94,6 +98,7 @@ export default function ItemsPage() {
   const [editItem, setEditItem] = useState<ItemProduct | null>(null);
   const [editName, setEditName] = useState("");
   const [editPrice, setEditPrice] = useState<number | "">("");
+  const [editUnit, setEditUnit] = useState<string>("KG");
   const [editCategory, setEditCategory] = useState("");
   const [editHsnCode, setEditHsnCode] = useState("");
   const [editGstPercent, setEditGstPercent] = useState<number>(5);
@@ -173,6 +178,7 @@ export default function ItemsPage() {
     setEditItem(item);
     setEditName(item.name);
     setEditPrice(item.price);
+    setEditUnit(item.unit || "KG");
     setEditCategory(item.category);
     setEditHsnCode(item.hsnCode || "2106");
     setEditGstPercent(item.gstPercent || 5);
@@ -265,6 +271,7 @@ export default function ItemsPage() {
       await addDoc(collection(db, "items"), {
         name: name.trim(),
         price: Number(price),
+        unit: unit.trim() || "KG",
         category: selectedCategory,
         hsnCode: hsnCode.trim() || "2106",
         gstPercent: Number(gstPercent) || 5,
@@ -278,6 +285,7 @@ export default function ItemsPage() {
 
       setName("");
       setPrice("");
+      setUnit("KG");
       setCategory("");
       setCustomCategory("");
       setHsnCode("2106");
@@ -327,6 +335,7 @@ export default function ItemsPage() {
       await updateDoc(doc(db, "items", editItem.id), {
         name: editName.trim(),
         price: Number(editPrice),
+        unit: editUnit.trim() || "KG",
         category: editCategory.trim(),
         hsnCode: editHsnCode.trim() || "2106",
         gstPercent: Number(editGstPercent) || 5,
@@ -407,9 +416,16 @@ export default function ItemsPage() {
       // Only Third-Party items include explicit barcode in Excel template. Non-third-party items leave Barcode ID blank to be auto-generated.
       const barcodeId = isThirdParty ? `890${100000000 + i}` : "";
 
+      // Unit variation for sample items (KG, piece, litre)
+      const unit =
+        category === "Bakery & Cookies" || name.includes("Peda") || name.includes("Ladoo") || name.includes("Jamun") || name.includes("Rasgulla")
+          ? (i % 2 === 0 ? "piece" : "KG")
+          : (name.includes("Basundi") || name.includes("Shrikhand") ? "litre" : "KG");
+
       sampleRows.push({
         "Item Name": name,
         "Price": price,
+        "Unit": unit,
         "Category": category,
         "HSN Code": hsnCode,
         "GST Percent": gstPercent,
@@ -423,6 +439,7 @@ export default function ItemsPage() {
     const worksheet = XLSX.utils.json_to_sheet(sampleRows);
     worksheet["!cols"] = [
       { wch: 28 },
+      { wch: 10 },
       { wch: 10 },
       { wch: 18 },
       { wch: 12 },
@@ -471,6 +488,8 @@ export default function ItemsPage() {
           row["Item Name"] || row["name"] || row["Name"] || `Item #${i + 1}`;
         const rowPrice =
           Number(row["Price"] || row["price"] || row["PRICE"]) || 100;
+        const rowUnit =
+          String(row["Unit"] || row["unit"] || row["Unit Type"] || row["UNIT"] || "KG").trim();
         const rowCategory =
           row["Category"] || row["category"] || row["Category Name"] || "General Sweets";
         const rowHsn =
@@ -511,6 +530,7 @@ export default function ItemsPage() {
         await addDoc(collection(db, "items"), {
           name: rowName.toString().trim(),
           price: rowPrice,
+          unit: rowUnit || "KG",
           category: rowCategory.toString().trim(),
           hsnCode: rowHsn.trim(),
           gstPercent: rowGst,
@@ -717,7 +737,7 @@ export default function ItemsPage() {
                     <th className="py-3 px-4 w-14">Image</th>
                     <th className="py-3 px-4">Item & Barcode</th>
                     <th className="py-3 px-4">Category</th>
-                    <th className="py-3 px-4">Price (₹)</th>
+                    <th className="py-3 px-4">Price (₹) / Unit</th>
                     <th className="py-3 px-4">Stock Status</th>
                     <th className="py-3 px-4">Tax / HSN</th>
                     <th className="py-3 px-4 text-right">Actions</th>
@@ -781,9 +801,14 @@ export default function ItemsPage() {
                           </span>
                         </td>
 
-                        {/* Price */}
-                        <td className="py-3 px-4 font-bold text-neutral-900 font-mono text-sm">
-                          ₹{item.price.toFixed(2)}
+                        {/* Price & Unit */}
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-neutral-900 font-mono text-sm">
+                            ₹{item.price.toFixed(2)}
+                          </span>
+                          <span className="text-[11px] font-medium text-neutral-500 font-sans ml-1">
+                            / {item.unit || "KG"}
+                          </span>
                         </td>
 
                         {/* Stock Status */}
@@ -797,7 +822,7 @@ export default function ItemsPage() {
                               }`}
                             >
                               {isLowStock && <AlertTriangle className="w-3 h-3 text-amber-600" />}
-                              {item.stockCount} in stock
+                              {item.stockCount} {item.unit || "units"} in stock
                             </span>
                             <span className="text-[10px] text-neutral-400 font-mono">
                               (Min: {item.bufferStockCount})
@@ -852,53 +877,107 @@ export default function ItemsPage() {
             </div>
 
             {/* Pagination Controls Bar */}
-            <div className="p-3.5 bg-neutral-50/80 border-t border-neutral-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-              <div className="text-neutral-600 font-medium">
-                Showing <strong className="font-mono text-neutral-900">{startIndex + 1}</strong> to{" "}
-                <strong className="font-mono text-neutral-900">
-                  {Math.min(endIndex, filteredItems.length)}
-                </strong>{" "}
-                of <strong className="font-mono text-neutral-900">{filteredItems.length}</strong> products
+            <div className="p-3.5 bg-neutral-50/80 border-t border-neutral-200/80 flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3 text-neutral-600 font-medium">
+                <span>
+                  Showing <strong className="font-mono text-neutral-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</strong> to{" "}
+                  <strong className="font-mono text-neutral-900">
+                    {Math.min(endIndex, filteredItems.length)}
+                  </strong>{" "}
+                  of <strong className="font-mono text-neutral-900">{filteredItems.length}</strong> products
+                </span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-200/60 text-neutral-700 text-[11px] font-medium">
+                  45 items / page
+                </span>
               </div>
 
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>Previous</span>
-                </button>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                  {/* First Page Button */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    title="First Page"
+                  >
+                    <ChevronsLeft className="w-4 h-4" />
+                  </button>
 
-                <div className="flex items-center gap-1 px-1">
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
-                    <button
-                      key={pageNum}
-                      type="button"
-                      onClick={() => setCurrentPage(pageNum)}
-                      className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        currentPage === pageNum
-                          ? "bg-neutral-900 text-white shadow-xs"
-                          : "bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  ))}
+                  {/* Previous Button */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Prev</span>
+                  </button>
+
+                  {/* Numbered Page Buttons with Ellipsis */}
+                  <div className="flex items-center gap-1 px-1">
+                    {(() => {
+                      const range: (number | string)[] = [];
+                      if (totalPages <= 7) {
+                        for (let i = 1; i <= totalPages; i++) range.push(i);
+                      } else if (currentPage <= 4) {
+                        range.push(1, 2, 3, 4, 5, "...", totalPages);
+                      } else if (currentPage >= totalPages - 3) {
+                        range.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+                      } else {
+                        range.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages);
+                      }
+
+                      return range.map((page, idx) => {
+                        if (typeof page === "string") {
+                          return (
+                            <span key={`ellipsis-${idx}`} className="px-1 text-neutral-400 font-mono select-none">
+                              ...
+                            </span>
+                          );
+                        }
+                        return (
+                          <button
+                            key={`page-${page}`}
+                            type="button"
+                            onClick={() => setCurrentPage(page)}
+                            className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              currentPage === page
+                                ? "bg-neutral-900 text-white shadow-xs"
+                                : "bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  {/* Next Button */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage >= totalPages}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <span className="hidden sm:inline">Next</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Last Page Button */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage >= totalPages}
+                    className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    title="Last Page"
+                  >
+                    <ChevronsRight className="w-4 h-4" />
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage >= totalPages}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  <span>Next</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+              )}
             </div>
           </div>
         )}
@@ -951,7 +1030,10 @@ export default function ItemsPage() {
                     {viewItem.name}
                   </h2>
                   <div className="text-xl font-bold text-neutral-900 font-mono">
-                    ₹{viewItem.price.toFixed(2)}
+                    ₹{viewItem.price.toFixed(2)}{" "}
+                    <span className="text-xs font-normal text-neutral-500 font-sans">
+                      / {viewItem.unit || "KG"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -969,7 +1051,7 @@ export default function ItemsPage() {
 
                 <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200">
                   <span className="text-[10px] font-bold uppercase text-neutral-400 block mb-1">
-                    Stock Level
+                    Unit & Stock Level
                   </span>
                   <span
                     className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-xs ${
@@ -978,7 +1060,7 @@ export default function ItemsPage() {
                         : "bg-emerald-100 text-emerald-900 border border-emerald-200"
                     }`}
                   >
-                    {viewItem.stockCount} units (Min: {viewItem.bufferStockCount})
+                    {viewItem.stockCount} {viewItem.unit || "units"} (Min: {viewItem.bufferStockCount})
                   </span>
                 </div>
 
@@ -1029,8 +1111,8 @@ export default function ItemsPage() {
       {/* ==================== EDIT ITEM MODAL ==================== */}
       {editItem && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200 my-8">
-            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl border border-neutral-200 my-8">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60 rounded-t-2xl">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-lg bg-blue-600 text-white">
                   <Pencil className="w-4 h-4" />
@@ -1068,7 +1150,7 @@ export default function ItemsPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">
                     Price (₹) <span className="text-red-500">*</span>
@@ -1085,6 +1167,23 @@ export default function ItemsPage() {
                     disabled={updatingItem}
                     className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none font-mono"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Unit <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    required
+                    value={editUnit}
+                    onChange={(e) => setEditUnit(e.target.value)}
+                    disabled={updatingItem}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer font-medium"
+                  >
+                    <option value="KG">KG</option>
+                    <option value="piece">piece</option>
+                    <option value="litre">litre</option>
+                  </select>
                 </div>
 
                 <div>
@@ -1296,7 +1395,7 @@ export default function ItemsPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">
                     Price (₹) <span className="text-red-500">*</span>
@@ -1318,6 +1417,23 @@ export default function ItemsPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Unit <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    required
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                    disabled={savingItem}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer font-medium"
+                  >
+                    <option value="KG">KG</option>
+                    <option value="piece">piece</option>
+                    <option value="litre">litre</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
                     Category <span className="text-red-500">*</span>
                   </label>
                   <select
@@ -1327,7 +1443,7 @@ export default function ItemsPage() {
                     disabled={savingItem}
                     className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
                   >
-                    <option value="">-- Select Category --</option>
+                    <option value="">-- Category --</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.name}>
                         {c.name}
@@ -1565,7 +1681,7 @@ export default function ItemsPage() {
                   </button>
                 </div>
                 <p className="text-[11px] text-neutral-500">
-                  Pre-filled with 100 realistic sweet products, prices, categories, HSN codes, and auto-generated barcodes.
+                  Pre-filled with 100 sweet products, prices, units (KG, piece, litre), categories, HSN codes, and auto-generated barcodes.
                 </p>
               </div>
 
