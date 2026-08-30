@@ -6,8 +6,9 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Package,
-  FolderTree,
+  Boxes,
   Barcode,
+  FolderTree,
   Wrench,
   Settings,
   ChevronRight,
@@ -31,6 +32,11 @@ const navItems: NavItem[] = [
     name: "Items",
     href: "/items",
     icon: Package,
+  },
+  {
+    name: "Item Batches",
+    href: "/batches",
+    icon: Boxes,
   },
   {
     name: "Barcode Generator",
