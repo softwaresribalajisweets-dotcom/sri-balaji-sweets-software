@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Package,
   FolderTree,
+  Barcode,
   Wrench,
   Settings,
   ChevronRight,
@@ -30,6 +31,11 @@ const navItems: NavItem[] = [
     name: "Items",
     href: "/items",
     icon: Package,
+  },
+  {
+    name: "Barcode Generator",
+    href: "/barcode-generator",
+    icon: Barcode,
   },
   {
     name: "Categories",
