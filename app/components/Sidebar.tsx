@@ -9,10 +9,11 @@ import {
   Boxes,
   Barcode,
   FolderTree,
+  Store,
+  ClipboardList,
   Wrench,
   Settings,
   ChevronRight,
-  Store,
 } from "lucide-react";
 
 interface NavItem {
@@ -52,6 +53,11 @@ const navItems: NavItem[] = [
     name: "Stores",
     href: "/stores",
     icon: Store,
+  },
+  {
+    name: "Store Requests",
+    href: "/store-requests",
+    icon: ClipboardList,
   },
   {
     name: "Utilities",
