@@ -20,6 +20,7 @@ import {
   TrendingDown,
   Receipt,
   ShoppingBag,
+  Users,
 } from "lucide-react";
 
 interface NavItem {
@@ -90,6 +91,12 @@ const navItems: NavItem[] = [
     name: "Walk-in Sales",
     href: "/walk-in-sales",
     icon: ShoppingBag,
+  },
+  {
+    name: "Employees",
+    href: "/employees",
+    icon: Users,
+    badge: "New",
   },
   {
     name: "Wastage Analytics",
