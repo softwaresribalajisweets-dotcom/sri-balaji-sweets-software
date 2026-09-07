@@ -18,6 +18,8 @@ import {
   Warehouse,
   Layers,
   TrendingDown,
+  Receipt,
+  ShoppingBag,
 } from "lucide-react";
 
 interface NavItem {
@@ -77,6 +79,17 @@ const navItems: NavItem[] = [
     name: "Store Stock",
     href: "/store-stock",
     icon: Layers,
+  },
+  {
+    name: "POS Billing",
+    href: "/pos",
+    icon: Receipt,
+    badge: "New",
+  },
+  {
+    name: "Walk-in Sales",
+    href: "/walk-in-sales",
+    icon: ShoppingBag,
   },
   {
     name: "Wastage Analytics",

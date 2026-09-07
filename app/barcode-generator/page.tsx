@@ -481,168 +481,9 @@ export default function BarcodeGeneratorPage() {
           </button>
         </div>
 
-        {/* Main Grid: LEFT SIDE PREVIEW (5 cols) & RIGHT SIDE STEP-BY-STEP FORM (7 cols) */}
+        {/* Main Grid: LEFT SIDE STEP-BY-STEP FORM (7 cols) & RIGHT SIDE LIVE PREVIEW (5 cols) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* ==================== LEFT COLUMN: LIVE STICKER PREVIEW & ACTIONS (5 Cols) ==================== */}
-          <div className="lg:col-span-5 space-y-4">
-            <div className="bg-white border border-neutral-200/90 rounded-xl p-5 shadow-2xs space-y-4 sticky top-20">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Eye className="w-4 h-4 text-neutral-700" />
-                  Live Sticker Preview
-                </span>
-                <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
-                  50mm × 30mm Label
-                </span>
-              </div>
-
-              {/* Exact Barcode Sticker Container */}
-              <div className="flex justify-center p-4 bg-neutral-100/70 rounded-xl border border-dashed border-neutral-300">
-                <div
-                  className="bg-white text-black p-3.5 rounded-lg border border-neutral-400 shadow-md flex flex-col justify-between select-none"
-                  style={{
-                    width: "280px",
-                    minHeight: "155px",
-                    fontFamily: "Arial, Helvetica, sans-serif",
-                  }}
-                >
-                  {/* Top Business Name */}
-                  <div className="text-center font-black text-sm tracking-wide text-black uppercase">
-                    {businessName || "SRI BALAJI SWEETS"}
-                  </div>
-
-                  {/* Line 2: Item Name (Left) & Unit (Right) */}
-                  <div className="flex items-center justify-between text-[11px] font-black tracking-tight text-black mt-1 uppercase">
-                    <span className="truncate pr-1">{itemTitle || "250 GRAMS BOX"}</span>
-                    <span className="shrink-0">{unitLabel || "1 PC"}</span>
-                  </div>
-
-                  {/* Middle Barcode Graphic (Encodes itembarcodeid*weight*batchnumber) */}
-                  <div className="my-1.5 flex justify-center items-center overflow-hidden">
-                    <svg
-                      ref={previewSvgRef}
-                      className="w-full max-h-12"
-                      style={{ shapeRendering: "crispEdges" }}
-                    ></svg>
-                  </div>
-
-                  {/* Bottom Line: Barcode ID + Batch Code (Left) & MRP (Right) */}
-                  <div className="flex items-center justify-between text-xs mt-1">
-                    <div className="flex items-center gap-1.5 font-mono">
-                      <span className="font-bold text-black">{barcodeId || "7707"}</span>
-                      <span className="text-neutral-400 font-normal">•</span>
-                      <span className="font-bold text-black">B#{activeBatchNumber}</span>
-                    </div>
-                    <span className="font-black text-sm text-black">
-                      MRP: {mrp}/-
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Scan Info Badge (Scanner Reads: itembarcodeid*weight*batchnumber) */}
-              <div className="p-3 rounded-xl bg-neutral-900 text-white space-y-1.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <ScanLine className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="text-neutral-300 text-[11px] font-medium">Hardware Scanner Reads:</span>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
-                    barcode*weight*batch
-                  </span>
-                </div>
-                <div className="font-mono font-bold text-amber-300 text-sm tracking-wider p-2 bg-neutral-800 rounded-lg border border-neutral-700 text-center truncate">
-                  {encodedBarcode}
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-neutral-400 pt-0.5">
-                  <span>Item ID: <strong className="text-white font-mono">{barcodeId}</strong></span>
-                  <span>Weight: <strong className="text-white font-mono">{weightAmount}{weightUnit}</strong></span>
-                  <span>Batch: <strong className="text-white font-mono">#{activeBatchNumber}</strong></span>
-                </div>
-              </div>
-
-              {/* Primary Action Button: Print Now */}
-              <div className="space-y-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Print {activeTab === "single" ? printQuantity : totalBatchStickers} Stickers Now</span>
-                </button>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadPng}
-                    className="flex items-center justify-center gap-1.5 py-2 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>Download PNG</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleAddToBatch}
-                    className="flex items-center justify-center gap-1.5 py-2 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Queue Batch</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Batch Queue Preview Box if items exist */}
-              {batchQueue.length > 0 && (
-                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2 mt-4">
-                  <div className="flex items-center justify-between text-xs font-bold text-neutral-800">
-                    <span>Batch Queue ({batchQueue.length} items • {totalBatchStickers} labels)</span>
-                    <button
-                      type="button"
-                      onClick={() => setBatchQueue([])}
-                      className="text-red-600 hover:text-red-800 text-[11px] font-semibold cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  <div className="max-h-40 overflow-y-auto space-y-1.5 text-xs">
-                    {batchQueue.map((item, idx) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between p-2 bg-white rounded-lg border border-neutral-200 text-xs"
-                      >
-                        <div className="truncate text-[11px] min-w-0 pr-2">
-                          <div className="font-bold truncate">{item.itemTitle}</div>
-                          <div className="text-[10px] text-neutral-500 font-mono flex items-center gap-1.5 mt-0.5">
-                            <span className="text-purple-700 font-bold">{item.encodedBarcode}</span>
-                            <span>•</span>
-                            <span>MRP ₹{item.mrp}/-</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="font-mono font-bold text-[10px] bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-200">
-                            ×{item.printQuantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setBatchQueue((prev) => prev.filter((_, i) => i !== idx))
-                            }
-                            className="text-neutral-400 hover:text-red-600 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ==================== RIGHT COLUMN: STEP-BY-STEP CONFIGURATION (7 Cols) ==================== */}
+          {/* ==================== LEFT COLUMN: STEP-BY-STEP CONFIGURATION (7 Cols) ==================== */}
           <div className="lg:col-span-7 space-y-5">
             {/* Step 1: Select Item */}
             <div className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs space-y-3">
@@ -1007,6 +848,165 @@ export default function BarcodeGeneratorPage() {
                 </div>
               </div>
             </details>
+          </div>
+
+          {/* ==================== RIGHT COLUMN: LIVE STICKER PREVIEW & ACTIONS (5 Cols) ==================== */}
+          <div className="lg:col-span-5 space-y-4">
+            <div className="bg-white border border-neutral-200/90 rounded-xl p-5 shadow-2xs space-y-4 sticky top-20">
+              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+                <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Eye className="w-4 h-4 text-neutral-700" />
+                  Live Sticker Preview
+                </span>
+                <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
+                  50mm × 30mm Label
+                </span>
+              </div>
+
+              {/* Exact Barcode Sticker Container */}
+              <div className="flex justify-center p-4 bg-neutral-100/70 rounded-xl border border-dashed border-neutral-300">
+                <div
+                  className="bg-white text-black p-3.5 rounded-lg border border-neutral-400 shadow-md flex flex-col justify-between select-none"
+                  style={{
+                    width: "280px",
+                    minHeight: "155px",
+                    fontFamily: "Arial, Helvetica, sans-serif",
+                  }}
+                >
+                  {/* Top Business Name */}
+                  <div className="text-center font-black text-sm tracking-wide text-black uppercase">
+                    {businessName || "SRI BALAJI SWEETS"}
+                  </div>
+
+                  {/* Line 2: Item Name (Left) & Unit (Right) */}
+                  <div className="flex items-center justify-between text-[11px] font-black tracking-tight text-black mt-1 uppercase">
+                    <span className="truncate pr-1">{itemTitle || "250 GRAMS BOX"}</span>
+                    <span className="shrink-0">{unitLabel || "1 PC"}</span>
+                  </div>
+
+                  {/* Middle Barcode Graphic (Encodes itembarcodeid*weight*batchnumber) */}
+                  <div className="my-1.5 flex justify-center items-center overflow-hidden">
+                    <svg
+                      ref={previewSvgRef}
+                      className="w-full max-h-12"
+                      style={{ shapeRendering: "crispEdges" }}
+                    ></svg>
+                  </div>
+
+                  {/* Bottom Line: Barcode ID + Batch Code (Left) & MRP (Right) */}
+                  <div className="flex items-center justify-between text-xs mt-1">
+                    <div className="flex items-center gap-1.5 font-mono">
+                      <span className="font-bold text-black">{barcodeId || "7707"}</span>
+                      <span className="text-neutral-400 font-normal">•</span>
+                      <span className="font-bold text-black">B#{activeBatchNumber}</span>
+                    </div>
+                    <span className="font-black text-sm text-black">
+                      MRP: {mrp}/-
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scan Info Badge (Scanner Reads: itembarcodeid*weight*batchnumber) */}
+              <div className="p-3 rounded-xl bg-neutral-900 text-white space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <ScanLine className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-neutral-300 text-[11px] font-medium">Hardware Scanner Reads:</span>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                    barcode*weight*batch
+                  </span>
+                </div>
+                <div className="font-mono font-bold text-amber-300 text-sm tracking-wider p-2 bg-neutral-800 rounded-lg border border-neutral-700 text-center truncate">
+                  {encodedBarcode}
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-neutral-400 pt-0.5">
+                  <span>Item ID: <strong className="text-white font-mono">{barcodeId}</strong></span>
+                  <span>Weight: <strong className="text-white font-mono">{weightAmount}{weightUnit}</strong></span>
+                  <span>Batch: <strong className="text-white font-mono">#{activeBatchNumber}</strong></span>
+                </div>
+              </div>
+
+              {/* Primary Action Button: Print Now */}
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print {activeTab === "single" ? printQuantity : totalBatchStickers} Stickers Now</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadPng}
+                    className="flex items-center justify-center gap-1.5 py-2 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-neutral-600" />
+                    <span>Download PNG</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleAddToBatch}
+                    className="flex items-center justify-center gap-1.5 py-2 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Queue Batch</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Batch Queue Preview Box if items exist */}
+              {batchQueue.length > 0 && (
+                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2 mt-4">
+                  <div className="flex items-center justify-between text-xs font-bold text-neutral-800">
+                    <span>Batch Queue ({batchQueue.length} items • {totalBatchStickers} labels)</span>
+                    <button
+                      type="button"
+                      onClick={() => setBatchQueue([])}
+                      className="text-red-600 hover:text-red-800 text-[11px] font-semibold cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 text-xs">
+                    {batchQueue.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-2 bg-white rounded-lg border border-neutral-200 text-xs"
+                      >
+                        <div className="truncate text-[11px] min-w-0 pr-2">
+                          <div className="font-bold truncate">{item.itemTitle}</div>
+                          <div className="text-[10px] text-neutral-500 font-mono flex items-center gap-1.5 mt-0.5">
+                            <span className="text-purple-700 font-bold">{item.encodedBarcode}</span>
+                            <span>•</span>
+                            <span>MRP ₹{item.mrp}/-</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono font-bold text-[10px] bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-200">
+                            ×{item.printQuantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setBatchQueue((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-neutral-400 hover:text-red-600 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
