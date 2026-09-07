@@ -14,6 +14,10 @@ import {
   Wrench,
   Settings,
   ChevronRight,
+  Factory,
+  Warehouse,
+  Layers,
+  TrendingDown,
 } from "lucide-react";
 
 interface NavItem {
@@ -58,6 +62,26 @@ const navItems: NavItem[] = [
     name: "Store Requests",
     href: "/store-requests",
     icon: ClipboardList,
+  },
+  {
+    name: "Factory TO",
+    href: "/factory-to",
+    icon: Factory,
+  },
+  {
+    name: "Warehouse TO",
+    href: "/warehouse-to",
+    icon: Warehouse,
+  },
+  {
+    name: "Store Stock",
+    href: "/store-stock",
+    icon: Layers,
+  },
+  {
+    name: "Wastage Analytics",
+    href: "/wastage",
+    icon: TrendingDown,
   },
   {
     name: "Utilities",

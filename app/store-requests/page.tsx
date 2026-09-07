@@ -10,6 +10,8 @@ import {
   deleteDoc,
   doc,
   query,
+  where,
+  getDocs,
   orderBy,
   serverTimestamp,
   updateDoc,
@@ -65,6 +67,19 @@ interface ItemProduct {
   imageUrl?: string;
 }
 
+export type StoreRequestStatus =
+  | "Created"
+  | "Accepted by Factory"
+  | "Moved to Warehouse"
+  | "Received at Warehouse"
+  | "Moved to Store"
+  | "Received at Store"
+  | "Pending"
+  | "In Progress"
+  | "Dispatched"
+  | "Delivered"
+  | "Cancelled";
+
 interface RequestItemEntry {
   itemId: string;
   itemName: string;
@@ -72,6 +87,9 @@ interface RequestItemEntry {
   barcodeId: string;
   unit: string;
   quantity: number;
+  fulfilledQuantity?: number;
+  packedQuantity?: number;
+  receivedQuantity?: number;
 }
 
 interface StoreRequestDoc {
@@ -84,8 +102,14 @@ interface StoreRequestDoc {
   requestDate: string; // "YYYY-MM-DD"
   items: RequestItemEntry[];
   totalQuantity: number;
-  status: "Pending" | "In Progress" | "Dispatched" | "Delivered" | "Cancelled";
+  totalFulfilledQuantity?: number;
+  totalPackedQuantity?: number;
+  totalReceivedQuantity?: number;
+  status: StoreRequestStatus;
   notes?: string;
+  factoryNotes?: string;
+  warehouseNotes?: string;
+  storeNotes?: string;
   createdAt?: any;
 }
 
@@ -106,7 +130,13 @@ export default function StoreRequestsPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [editingRequestNumber, setEditingRequestNumber] = useState<string | null>(null);
-  const [editingStatus, setEditingStatus] = useState<StoreRequestDoc["status"]>("Pending");
+  const [editingStatus, setEditingStatus] = useState<StoreRequestStatus>("Created");
+
+  // Receive at Store Modal State
+  const [receivingRequest, setReceivingRequest] = useState<StoreRequestDoc | null>(null);
+  const [receivingQuantities, setReceivingQuantities] = useState<{ [itemId: string]: number | "" }>({});
+  const [receivingNotes, setReceivingNotes] = useState("");
+  const [savingReceipt, setSavingReceipt] = useState(false);
 
   const [reqStoreId, setReqStoreId] = useState<string>("");
   const [reqDate, setReqDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
@@ -167,7 +197,7 @@ export default function StoreRequestsPage() {
   const handleOpenAddRequest = () => {
     setEditingRequestId(null);
     setEditingRequestNumber(null);
-    setEditingStatus("Pending");
+    setEditingStatus("Created");
     setReqStoreId(stores[0]?.id || "");
     setReqDate(new Date().toISOString().split("T")[0]);
     setReqNotes("");
@@ -196,6 +226,9 @@ export default function StoreRequestsPage() {
           barcodeId: it.barcodeId || "",
           unit: it.unit || "KG",
           quantity: it.quantity || 1,
+          fulfilledQuantity: it.fulfilledQuantity,
+          packedQuantity: it.packedQuantity,
+          receivedQuantity: it.receivedQuantity,
         };
       });
     }
@@ -289,7 +322,7 @@ export default function StoreRequestsPage() {
           requestDate: reqDate,
           items: requestItemsArray,
           totalQuantity: totalCartQuantity,
-          status: "Pending",
+          status: "Created",
           notes: reqNotes.trim(),
           createdAt: serverTimestamp(),
         });
@@ -304,15 +337,120 @@ export default function StoreRequestsPage() {
     }
   };
 
+  // Open Receive at Store Modal
+  const handleOpenReceiveAtStore = (req: StoreRequestDoc) => {
+    setReceivingRequest(req);
+    const initialQtyMap: { [itemId: string]: number | "" } = {};
+    req.items.forEach((it) => {
+      initialQtyMap[it.itemId] =
+        it.packedQuantity !== undefined
+          ? it.packedQuantity
+          : it.fulfilledQuantity !== undefined
+          ? it.fulfilledQuantity
+          : it.quantity;
+    });
+    setReceivingQuantities(initialQtyMap);
+    setReceivingNotes("");
+  };
+
+  // Helper to activate all batches linked to this request once received at store
+  const activateLinkedBatchesForRequest = async (
+    requestId: string,
+    itemReceivedQtyMap?: { [itemId: string]: number },
+    targetStoreId?: string
+  ) => {
+    try {
+      const qBatches = query(
+        collection(db, "batches"),
+        where("storeRequestId", "==", requestId)
+      );
+      const batchSnap = await getDocs(qBatches);
+
+      for (const bDoc of batchSnap.docs) {
+        const bData = bDoc.data();
+        const updates: any = {
+          storeReceived: true,
+          status: "Received at Store",
+          receivedAt: serverTimestamp(),
+        };
+
+        if (itemReceivedQtyMap && itemReceivedQtyMap[bData.itemId] !== undefined) {
+          const recQty = Number(itemReceivedQtyMap[bData.itemId]);
+          if (bData.storeAllocations && Array.isArray(bData.storeAllocations)) {
+            updates.storeAllocations = bData.storeAllocations.map((alloc: any) => {
+              if (!targetStoreId || alloc.storeId === targetStoreId) {
+                return { ...alloc, quantity: recQty };
+              }
+              return alloc;
+            });
+            updates.totalAllocated = recQty;
+          }
+        }
+
+        await updateDoc(doc(db, "batches", bDoc.id), updates);
+      }
+    } catch (err) {
+      console.error("Error activating linked batches for request:", err);
+    }
+  };
+
+  // Confirm Receipt at Store
+  const handleConfirmReceiveAtStore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!receivingRequest) return;
+
+    try {
+      setSavingReceipt(true);
+      const updatedItems = receivingRequest.items.map((it) => ({
+        ...it,
+        receivedQuantity: Number(receivingQuantities[it.itemId]) || 0,
+      }));
+
+      const totalReceived = updatedItems.reduce(
+        (acc, curr) => acc + (Number(curr.receivedQuantity) || 0),
+        0
+      );
+
+      await updateDoc(doc(db, "store_requests", receivingRequest.id), {
+        status: "Received at Store",
+        items: updatedItems,
+        totalReceivedQuantity: totalReceived,
+        storeNotes: receivingNotes.trim(),
+      });
+
+      // Activate all linked batches so they immediately reflect in Store Stock!
+      const qtyMap: { [itemId: string]: number } = {};
+      updatedItems.forEach((it) => {
+        qtyMap[it.itemId] = Number(it.receivedQuantity) || 0;
+      });
+      await activateLinkedBatchesForRequest(
+        receivingRequest.id,
+        qtyMap,
+        receivingRequest.storeId
+      );
+
+      setReceivingRequest(null);
+    } catch (err: any) {
+      console.error("Error receiving store request:", err);
+      alert(`Error updating receipt: ${err.message}`);
+    } finally {
+      setSavingReceipt(false);
+    }
+  };
+
   // Update Status of a Request
   const handleUpdateStatus = async (
     reqId: string,
-    newStatus: StoreRequestDoc["status"]
+    newStatus: StoreRequestStatus
   ) => {
     try {
       await updateDoc(doc(db, "store_requests", reqId), {
         status: newStatus,
       });
+
+      if (newStatus === "Received at Store") {
+        await activateLinkedBatchesForRequest(reqId);
+      }
     } catch (err: any) {
       alert(`Error updating status: ${err.message}`);
     }
@@ -488,12 +626,14 @@ export default function StoreRequestsPage() {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="bg-white text-xs text-neutral-700 px-3 py-2 rounded-lg border border-neutral-300 focus:outline-none font-medium cursor-pointer"
             >
-              <option value="all">All Statuses</option>
-              <option value="Pending">Pending</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Dispatched">Dispatched</option>
-              <option value="Delivered">Delivered</option>
-              <option value="Cancelled">Cancelled</option>
+              <option value="all">⚡ All Statuses</option>
+              <option value="Created">🟡 Created</option>
+              <option value="Accepted by Factory">🔵 Accepted by Factory</option>
+              <option value="Moved to Warehouse">🟣 Moved to Warehouse</option>
+              <option value="Received at Warehouse">🔷 Received at Warehouse</option>
+              <option value="Moved to Store">🚚 Moved to Store</option>
+              <option value="Received at Store">🟢 Received at Store</option>
+              <option value="Cancelled">⚪ Cancelled</option>
             </select>
           </div>
 
@@ -591,7 +731,12 @@ export default function StoreRequestsPage() {
 
                       {/* Total Quantity */}
                       <td className="py-3 px-4 font-mono font-bold text-neutral-900 text-sm">
-                        {req.totalQuantity} <span className="text-xs font-normal text-neutral-500 font-sans">Units</span>
+                        {req.totalQuantity} <span className="text-xs font-normal text-neutral-500 font-sans">Req</span>
+                        {req.totalFulfilledQuantity !== undefined && req.totalFulfilledQuantity !== req.totalQuantity && (
+                          <span className="text-[10px] block text-blue-700 font-medium font-sans">
+                            Factory: {req.totalFulfilledQuantity}
+                          </span>
+                        )}
                       </td>
 
                       {/* Status Dropdown / Badge */}
@@ -599,31 +744,50 @@ export default function StoreRequestsPage() {
                         <select
                           value={req.status}
                           onChange={(e) =>
-                            handleUpdateStatus(req.id, e.target.value as StoreRequestDoc["status"])
+                            handleUpdateStatus(req.id, e.target.value as StoreRequestStatus)
                           }
                           className={`text-xs font-bold px-2.5 py-1 rounded-lg border focus:outline-none cursor-pointer ${
-                            req.status === "Pending"
+                            req.status === "Created" || req.status === "Pending"
                               ? "bg-amber-50 text-amber-800 border-amber-300"
-                              : req.status === "In Progress"
+                              : req.status === "Accepted by Factory" || req.status === "In Progress"
                               ? "bg-blue-50 text-blue-800 border-blue-300"
-                              : req.status === "Dispatched"
+                              : req.status === "Moved to Warehouse"
+                              ? "bg-indigo-50 text-indigo-800 border-indigo-300"
+                              : req.status === "Received at Warehouse"
+                              ? "bg-cyan-50 text-cyan-800 border-cyan-300"
+                              : req.status === "Moved to Store" || req.status === "Dispatched"
                               ? "bg-purple-50 text-purple-800 border-purple-300"
-                              : req.status === "Delivered"
+                              : req.status === "Received at Store" || req.status === "Delivered"
                               ? "bg-emerald-50 text-emerald-800 border-emerald-300"
                               : "bg-neutral-100 text-neutral-600 border-neutral-300"
                           }`}
                         >
-                          <option value="Pending">🟡 Pending</option>
-                          <option value="In Progress">🔵 In Progress</option>
-                          <option value="Dispatched">🟣 Dispatched</option>
-                          <option value="Delivered">🟢 Delivered</option>
+                          <option value="Created">🟡 Created</option>
+                          <option value="Accepted by Factory">🔵 Accepted by Factory</option>
+                          <option value="Moved to Warehouse">🟣 Moved to Warehouse</option>
+                          <option value="Received at Warehouse">🔷 Received at Warehouse</option>
+                          <option value="Moved to Store">🚚 Moved to Store</option>
+                          <option value="Received at Store">🟢 Received at Store</option>
                           <option value="Cancelled">⚪ Cancelled</option>
                         </select>
                       </td>
 
                       {/* Actions */}
                       <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Receive at Store Quick Button */}
+                          {(req.status === "Moved to Store" || req.status === "Dispatched") && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenReceiveAtStore(req)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer transition-colors"
+                              title="Acknowledge Receipt at Branch Store"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Receive</span>
+                            </button>
+                          )}
+
                           {/* View Button */}
                           <button
                             type="button"
@@ -1127,7 +1291,9 @@ export default function StoreRequestsPage() {
                         <th className="py-2.5 px-3">#</th>
                         <th className="py-2.5 px-3">Item Name</th>
                         <th className="py-2.5 px-3">Category</th>
-                        <th className="py-2.5 px-3 text-right">Requested Quantity</th>
+                        <th className="py-2.5 px-3 text-right">Requested</th>
+                        <th className="py-2.5 px-3 text-right">Factory Fulfilled</th>
+                        <th className="py-2.5 px-3 text-right">Received</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200/60">
@@ -1138,12 +1304,21 @@ export default function StoreRequestsPage() {
                           </td>
                           <td className="py-2.5 px-3 font-bold text-neutral-900">
                             {it.itemName}
+                            <span className="block text-[10px] text-neutral-400 font-mono font-normal">
+                              Barcode: {it.barcodeId}
+                            </span>
                           </td>
                           <td className="py-2.5 px-3 text-neutral-600">
                             {it.category || "General"}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-neutral-900 text-right">
                             {it.quantity} {it.unit}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-blue-800 text-right">
+                            {it.fulfilledQuantity !== undefined ? `${it.fulfilledQuantity} ${it.unit}` : "-"}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-emerald-800 text-right">
+                            {it.receivedQuantity !== undefined ? `${it.receivedQuantity} ${it.unit}` : "-"}
                           </td>
                         </tr>
                       ))}
@@ -1156,6 +1331,12 @@ export default function StoreRequestsPage() {
                         <td className="py-2.5 px-3 font-mono text-neutral-900 text-right">
                           {viewRequest.totalQuantity} units
                         </td>
+                        <td className="py-2.5 px-3 font-mono text-blue-800 text-right">
+                          {viewRequest.totalFulfilledQuantity !== undefined ? `${viewRequest.totalFulfilledQuantity} units` : "-"}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-emerald-800 text-right">
+                          {viewRequest.totalReceivedQuantity !== undefined ? `${viewRequest.totalReceivedQuantity} units` : "-"}
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
@@ -1165,6 +1346,18 @@ export default function StoreRequestsPage() {
                   <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200 text-[11px]">
                     <span className="font-bold text-amber-900 block mb-0.5">Order Notes:</span>
                     <p className="text-amber-950">{viewRequest.notes}</p>
+                  </div>
+                )}
+                {viewRequest.factoryNotes && (
+                  <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200 text-[11px]">
+                    <span className="font-bold text-blue-900 block mb-0.5">Factory Remarks:</span>
+                    <p className="text-blue-950">{viewRequest.factoryNotes}</p>
+                  </div>
+                )}
+                {viewRequest.storeNotes && (
+                  <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200 text-[11px]">
+                    <span className="font-bold text-emerald-900 block mb-0.5">Store Receiving Remarks:</span>
+                    <p className="text-emerald-950">{viewRequest.storeNotes}</p>
                   </div>
                 )}
               </div>
@@ -1202,6 +1395,133 @@ export default function StoreRequestsPage() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* RECEIVE AT STORE MODAL                                         */}
+        {/* ============================================================== */}
+        {receivingRequest && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-xl border border-neutral-200 overflow-hidden">
+              <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-neutral-50">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-emerald-600 text-white">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-neutral-900">
+                      Receive Stock at Store - {receivingRequest.requestNumber}
+                    </h3>
+                    <p className="text-[11px] text-neutral-500">
+                      Verify physical quantities received at {receivingRequest.storeName}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !savingReceipt && setReceivingRequest(null)}
+                  className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleConfirmReceiveAtStore} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase block">Store</span>
+                      <strong className="text-neutral-900">{receivingRequest.storeName}</strong>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase block">Request Date</span>
+                      <span className="font-mono text-neutral-800">{receivingRequest.requestDate}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-neutral-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-neutral-100 text-[11px] font-bold text-neutral-600 border-b border-neutral-200">
+                      <tr>
+                        <th className="py-2.5 px-3">Item Name</th>
+                        <th className="py-2.5 px-3 text-center">Requested</th>
+                        <th className="py-2.5 px-3 text-center">Factory Supplied</th>
+                        <th className="py-2.5 px-3 text-right">Received Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200/60">
+                      {receivingRequest.items.map((it) => (
+                        <tr key={it.itemId}>
+                          <td className="py-2.5 px-3">
+                            <strong className="text-neutral-900 block">{it.itemName}</strong>
+                            <span className="text-[10px] text-neutral-400 font-mono">Barcode: {it.barcodeId}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono text-neutral-600">
+                            {it.quantity} {it.unit}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono font-semibold text-blue-800">
+                            {it.fulfilledQuantity !== undefined ? `${it.fulfilledQuantity} ${it.unit}` : `${it.quantity} ${it.unit}`}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step="any"
+                                required
+                                value={receivingQuantities[it.itemId]}
+                                onChange={(e) =>
+                                  setReceivingQuantities((prev) => ({
+                                    ...prev,
+                                    [it.itemId]: e.target.value === "" ? "" : Number(e.target.value),
+                                  }))
+                                }
+                                className="w-20 bg-white font-mono font-bold text-xs p-1.5 rounded-lg border border-neutral-300 text-right focus:outline-none focus:border-neutral-900"
+                              />
+                              <span className="text-[11px] text-neutral-500 font-medium">{it.unit}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Store Receiving Notes / Remarks (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. All cartons received in good condition / 1 box damaged"
+                    value={receivingNotes}
+                    onChange={(e) => setReceivingNotes(e.target.value)}
+                    className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReceivingRequest(null)}
+                    disabled={savingReceipt}
+                    className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingReceipt}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
+                  >
+                    {savingReceipt && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>Confirm Receipt at Store</span>
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

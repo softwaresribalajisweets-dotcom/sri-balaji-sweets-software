@@ -125,14 +125,6 @@ export default function ItemBatchesPage() {
   const [notes, setNotes] = useState("");
   const [savingBatch, setSavingBatch] = useState(false);
 
-  // Store Arrangement / Stock Allocation State for Add Batch
-  const [storeAllocations, setStoreAllocations] = useState<{
-    storeId: string;
-    storeName: string;
-    quantity: number | "";
-  }[]>([]);
-  const [selectedStoreToAdd, setSelectedStoreToAdd] = useState<string>("");
-
   // View Item's Batches Modal State
   const [viewingItemBatches, setViewingItemBatches] = useState<ItemProduct | null>(null);
 
@@ -151,18 +143,6 @@ export default function ItemBatchesPage() {
   };
 
   const calculatedExpiryDate = computeExpiryDate(mfgDate, expiryDays);
-
-  // Computed values for Store Arrangement
-  const totalMfgQty = Number(manufacturedQuantity) || 0;
-  const totalAllocatedQty = storeAllocations.reduce(
-    (sum, a) => sum + (Number(a.quantity) || 0),
-    0
-  );
-  const unallocatedQty = Math.max(0, totalMfgQty - totalAllocatedQty);
-  const isOverAllocated = totalAllocatedQty > totalMfgQty;
-  const allocationPercentage = totalMfgQty > 0
-    ? Math.min(100, Math.round((totalAllocatedQty / totalMfgQty) * 100))
-    : 0;
 
   // Subscribe to Items, Batches, and Stores
   useEffect(() => {
@@ -245,8 +225,6 @@ export default function ItemBatchesPage() {
     setExpiryDays(3);
     setManufacturedQuantity(50);
     setNotes("");
-    setStoreAllocations([]);
-    setSelectedStoreToAdd("");
     setIsAddModalOpen(true);
   };
 
@@ -258,65 +236,6 @@ export default function ItemBatchesPage() {
     setAutoBatchNumber(nextNum);
   };
 
-  // Store Allocation Handlers
-  const handleAddStoreAllocation = (storeId: string) => {
-    if (!storeId) return;
-    const store = stores.find((s) => s.id === storeId);
-    if (!store) return;
-    if (storeAllocations.some((a) => a.storeId === storeId)) return;
-
-    // Default allocation can be remaining unallocated quantity
-    const remaining = Math.max(0, totalMfgQty - totalAllocatedQty);
-    setStoreAllocations((prev) => [
-      ...prev,
-      {
-        storeId: store.id,
-        storeName: store.name,
-        quantity: remaining > 0 ? remaining : "",
-      },
-    ]);
-    setSelectedStoreToAdd("");
-  };
-
-  const handleStoreQtyChange = (storeId: string, val: number | "") => {
-    setStoreAllocations((prev) =>
-      prev.map((a) => (a.storeId === storeId ? { ...a, quantity: val } : a))
-    );
-  };
-
-  const handleRemoveStoreAllocation = (storeId: string) => {
-    setStoreAllocations((prev) => prev.filter((a) => a.storeId !== storeId));
-  };
-
-  const handleFillRemaining = (storeId: string) => {
-    const currentStoreQty = Number(storeAllocations.find((a) => a.storeId === storeId)?.quantity) || 0;
-    const available = Math.max(0, totalMfgQty - (totalAllocatedQty - currentStoreQty));
-    handleStoreQtyChange(storeId, available > 0 ? available : 0);
-  };
-
-  const handleDistributeEqually = () => {
-    if (storeAllocations.length === 0 || totalMfgQty <= 0) return;
-    const equalQty = Math.floor((totalMfgQty / storeAllocations.length) * 100) / 100;
-    setStoreAllocations((prev) =>
-      prev.map((a) => ({ ...a, quantity: equalQty }))
-    );
-  };
-
-  const handleAddAllStores = () => {
-    const unadded = stores.filter(
-      (s) => s.status !== "Inactive" && !storeAllocations.some((a) => a.storeId === s.id)
-    );
-    if (unadded.length === 0) return;
-    setStoreAllocations((prev) => [
-      ...prev,
-      ...unadded.map((s) => ({
-        storeId: s.id,
-        storeName: s.name,
-        quantity: "" as const,
-      })),
-    ]);
-  };
-
   // Save Batch to Firestore
   const handleSaveBatch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,28 +244,11 @@ export default function ItemBatchesPage() {
       return;
     }
 
-    if (isOverAllocated) {
-      alert(
-        `Total allocated to stores (${totalAllocatedQty} ${selectedItem.unit || "KG"}) exceeds total batch quantity (${manufacturedQuantity} ${selectedItem.unit || "KG"}). Please adjust store quantities before saving.`
-      );
-      return;
-    }
-
     try {
       setSavingBatch(true);
       const nextBatchCode = getNextBatchNumberForItem(selectedItem.id);
       const expDate = computeExpiryDate(mfgDate, expiryDays);
-
-      const cleanAllocations = storeAllocations
-        .filter((a) => Number(a.quantity) > 0)
-        .map((a) => ({
-          storeId: a.storeId,
-          storeName: a.storeName,
-          quantity: Number(a.quantity),
-        }));
-
-      const totalAllocated = cleanAllocations.reduce((sum, a) => sum + a.quantity, 0);
-      const unallocated = Math.max(0, Number(manufacturedQuantity) - totalAllocated);
+      const qty = Number(manufacturedQuantity);
 
       await addDoc(collection(db, "batches"), {
         itemId: selectedItem.id,
@@ -356,14 +258,14 @@ export default function ItemBatchesPage() {
         itemUnit: selectedItem.unit || "KG",
         batchCode: nextBatchCode,
         batchCodeString: `Batch #${nextBatchCode}`,
-        manufacturedQuantity: Number(manufacturedQuantity),
+        manufacturedQuantity: qty,
         manufacturingDate: mfgDate,
         expiryDays: Number(expiryDays),
         expiryDate: expDate,
         notes: notes.trim(),
-        storeAllocations: cleanAllocations,
-        totalAllocated: totalAllocated,
-        unallocatedQuantity: unallocated,
+        storeAllocations: [],
+        totalAllocated: 0,
+        unallocatedQuantity: qty,
         createdAt: serverTimestamp(),
       });
 
@@ -1106,7 +1008,7 @@ export default function ItemBatchesPage() {
         {/* ============================================================== */}
         {isAddModalOpen && (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-neutral-200 my-8 overflow-hidden flex flex-col">
+            <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-neutral-200 my-8 overflow-hidden flex flex-col">
               {/* Modal Header */}
               <div className="flex items-center justify-between p-4 px-6 border-b border-neutral-100 bg-neutral-50 rounded-t-2xl">
                 <div className="flex items-center gap-2.5">
@@ -1123,7 +1025,7 @@ export default function ItemBatchesPage() {
                       )}
                     </h3>
                     <p className="text-[11px] text-neutral-500">
-                      Generate item-specific batch code and arrange stock distribution across branch stores
+                      Generate item batch code with quantity, manufacturing date, and shelf life
                     </p>
                   </div>
                 </div>
@@ -1138,472 +1040,177 @@ export default function ItemBatchesPage() {
 
               {/* Form Body */}
               <form onSubmit={handleSaveBatch} className="flex-1 flex flex-col overflow-hidden">
-                <div className="p-6 overflow-y-auto max-h-[75vh] space-y-6">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    {/* Left Column: Batch & Production Details */}
-                    <div className="lg:col-span-5 space-y-4">
-                      <div className="pb-2 border-b border-neutral-200/80 flex items-center gap-2">
-                        <Package className="w-4 h-4 text-neutral-700" />
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                          1. Production Details
-                        </h4>
-                      </div>
+                <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                  {/* 1. Select Item */}
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      Select Sweet Product <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      required
+                      value={selectedItem?.id || ""}
+                      onChange={(e) => handleSelectItemChange(e.target.value)}
+                      disabled={savingBatch}
+                      className="w-full bg-white text-xs font-medium text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 cursor-pointer shadow-2xs"
+                    >
+                      <option value="">-- Select Product --</option>
+                      {items.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.name} (Barcode: {i.barcodeId}) - ₹{i.price}/{i.unit || "KG"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                      {/* 1. Select Item */}
-                      <div>
-                        <label className="block text-xs font-bold text-neutral-700 mb-1">
-                          Select Sweet Product <span className="text-red-500">*</span>
-                        </label>
-                        <select
-                          required
-                          value={selectedItem?.id || ""}
-                          onChange={(e) => handleSelectItemChange(e.target.value)}
-                          disabled={savingBatch}
-                          className="w-full bg-white text-xs font-medium text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 cursor-pointer shadow-2xs"
+                  {/* 2. Auto-generated Batch Code Badge */}
+                  <div className="p-3 bg-purple-50/80 rounded-xl border border-purple-200 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold text-purple-900 block">
+                        Auto-Generated Batch Code
+                      </span>
+                      <p className="text-[10px] text-purple-700">
+                        Sequential batch #{autoBatchNumber} for {selectedItem ? selectedItem.name : "selected product"}
+                      </p>
+                    </div>
+                    <span className="px-3 py-1.5 rounded-lg bg-purple-700 text-white font-mono font-bold text-sm shadow-xs">
+                      Batch #{autoBatchNumber}
+                    </span>
+                  </div>
+
+                  {/* 3. Manufactured Quantity & Unit */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        Manufactured Qty <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0.1}
+                        step="any"
+                        required
+                        placeholder="e.g. 50"
+                        value={manufacturedQuantity}
+                        onChange={(e) =>
+                          setManufacturedQuantity(
+                            e.target.value === "" ? "" : Number(e.target.value)
+                          )
+                        }
+                        disabled={savingBatch}
+                        className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        Product Unit
+                      </label>
+                      <input
+                        type="text"
+                        readOnly
+                        value={selectedItem?.unit || "KG"}
+                        className="w-full bg-neutral-100 text-xs font-bold font-mono text-neutral-600 p-2.5 rounded-lg border border-neutral-300 cursor-not-allowed shadow-2xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 4. Manufacturing Date & Shelf Life Days */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        Mfg Date <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={mfgDate}
+                        onChange={(e) => setMfgDate(e.target.value)}
+                        disabled={savingBatch}
+                        className="w-full bg-white text-xs font-mono text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        Expiry Days <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={365}
+                        required
+                        placeholder="e.g. 3"
+                        value={expiryDays}
+                        onChange={(e) => setExpiryDays(Math.max(1, Number(e.target.value) || 1))}
+                        disabled={savingBatch}
+                        className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick Expiry Days Chips */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-neutral-500 mb-1">
+                      Shelf-life presets:
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {PRESET_EXPIRY_DAYS.map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() => setExpiryDays(days)}
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold font-mono transition-all cursor-pointer ${
+                            expiryDays === days
+                              ? "bg-neutral-900 text-white"
+                              : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
+                          }`}
                         >
-                          <option value="">-- Select Product --</option>
-                          {items.map((i) => (
-                            <option key={i.id} value={i.id}>
-                              {i.name} (Barcode: {i.barcodeId}) - ₹{i.price}/{i.unit || "KG"}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                          {days}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-                      {/* 2. Auto-generated Item-Specific Batch Code Badge */}
-                      <div className="p-3 bg-purple-50/80 rounded-xl border border-purple-200 flex items-center justify-between">
-                        <div>
-                          <span className="text-[11px] font-bold text-purple-900 block">
-                            Auto-Generated Batch Code
-                          </span>
-                          <p className="text-[10px] text-purple-700">
-                            Sequential batch #{autoBatchNumber} for {selectedItem ? selectedItem.name : "selected product"}
-                          </p>
-                        </div>
-                        <span className="px-3 py-1.5 rounded-lg bg-purple-700 text-white font-mono font-bold text-sm shadow-xs">
-                          Batch #{autoBatchNumber}
+                  {/* Computed Expiry Date Display */}
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-amber-700" />
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-amber-800 block">
+                          Computed Expiry
+                        </span>
+                        <span className="text-xs text-amber-900 font-medium">
+                          {mfgDate} + {expiryDays} days
                         </span>
                       </div>
-
-                      {/* 3. Manufactured Quantity & Unit */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-bold text-neutral-700 mb-1">
-                            Manufactured Qty <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="number"
-                            min={0.1}
-                            step="any"
-                            required
-                            placeholder="e.g. 50"
-                            value={manufacturedQuantity}
-                            onChange={(e) =>
-                              setManufacturedQuantity(
-                                e.target.value === "" ? "" : Number(e.target.value)
-                              )
-                            }
-                            disabled={savingBatch}
-                            className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-neutral-700 mb-1">
-                            Product Unit
-                          </label>
-                          <input
-                            type="text"
-                            readOnly
-                            value={selectedItem?.unit || "KG"}
-                            className="w-full bg-neutral-100 text-xs font-bold font-mono text-neutral-600 p-2.5 rounded-lg border border-neutral-300 cursor-not-allowed shadow-2xs"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 4. Manufacturing Date & Shelf Life Days */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-bold text-neutral-700 mb-1">
-                            Mfg Date <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="date"
-                            required
-                            value={mfgDate}
-                            onChange={(e) => setMfgDate(e.target.value)}
-                            disabled={savingBatch}
-                            className="w-full bg-white text-xs font-mono text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-neutral-700 mb-1">
-                            Expiry Days <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={365}
-                            required
-                            placeholder="e.g. 3"
-                            value={expiryDays}
-                            onChange={(e) => setExpiryDays(Math.max(1, Number(e.target.value) || 1))}
-                            disabled={savingBatch}
-                            className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Quick Expiry Days Chips */}
-                      <div>
-                        <label className="block text-[11px] font-semibold text-neutral-500 mb-1">
-                          Shelf-life presets:
-                        </label>
-                        <div className="flex flex-wrap gap-1">
-                          {PRESET_EXPIRY_DAYS.map((days) => (
-                            <button
-                              key={days}
-                              type="button"
-                              onClick={() => setExpiryDays(days)}
-                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold font-mono transition-all cursor-pointer ${
-                                expiryDays === days
-                                  ? "bg-neutral-900 text-white"
-                                  : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
-                              }`}
-                            >
-                              {days}d
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Computed Expiry Date Display */}
-                      <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-amber-700" />
-                          <div>
-                            <span className="text-[10px] font-bold uppercase text-amber-800 block">
-                              Computed Expiry
-                            </span>
-                            <span className="text-xs text-amber-900 font-medium">
-                              {mfgDate} + {expiryDays} days
-                            </span>
-                          </div>
-                        </div>
-                        <strong className="font-mono font-bold text-amber-950 text-sm">
-                          {calculatedExpiryDate}
-                        </strong>
-                      </div>
-
-                      {/* Notes (Optional) */}
-                      <div>
-                        <label className="block text-xs font-bold text-neutral-700 mb-1">
-                          Batch Notes (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Morning Shift / Master Chef Batch"
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          disabled={savingBatch}
-                          className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
-                        />
-                      </div>
                     </div>
+                    <strong className="font-mono font-bold text-amber-950 text-sm">
+                      {calculatedExpiryDate}
+                    </strong>
+                  </div>
 
-                    {/* Right Column: Stores Arrangement / Stock Allocation */}
-                    <div className="lg:col-span-7 space-y-4">
-                      <div className="pb-2 border-b border-neutral-200/80 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Store className="w-4 h-4 text-blue-700" />
-                          <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                            2. Stores Arrangement
-                          </h4>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-800 font-bold border border-blue-200">
-                            {storeAllocations.length} {storeAllocations.length === 1 ? "store" : "stores"}
-                          </span>
-                        </div>
-
-                        {storeAllocations.length > 1 && totalMfgQty > 0 && (
-                          <button
-                            type="button"
-                            onClick={handleDistributeEqually}
-                            className="text-[11px] text-blue-700 hover:text-blue-900 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-                            title="Distribute total quantity equally among all added stores"
-                          >
-                            <SlidersHorizontal className="w-3 h-3" />
-                            <span>Split Equally</span>
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Live Allocation Summary & Progress Bar */}
-                      <div className="p-3.5 bg-neutral-50 rounded-xl border border-neutral-200 space-y-3">
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          <div className="bg-white p-2.5 rounded-lg border border-neutral-200 shadow-2xs">
-                            <span className="text-[10px] text-neutral-500 font-bold uppercase block tracking-wider">
-                              Total Batch
-                            </span>
-                            <span className="font-mono font-bold text-neutral-900 text-sm">
-                              {totalMfgQty} <span className="text-[11px] font-sans text-neutral-500">{selectedItem?.unit || "KG"}</span>
-                            </span>
-                          </div>
-
-                          <div
-                            className={`p-2.5 rounded-lg border shadow-2xs ${
-                              isOverAllocated
-                                ? "bg-red-50 border-red-200 text-red-900"
-                                : "bg-white border-neutral-200 text-neutral-900"
-                            }`}
-                          >
-                            <span
-                              className={`text-[10px] font-bold uppercase block tracking-wider ${
-                                isOverAllocated ? "text-red-700" : "text-neutral-500"
-                              }`}
-                            >
-                              Allocated Stores
-                            </span>
-                            <span
-                              className={`font-mono font-bold text-sm ${
-                                isOverAllocated ? "text-red-700" : "text-blue-700"
-                              }`}
-                            >
-                              {totalAllocatedQty}{" "}
-                              <span className="text-[10px] font-sans font-medium">
-                                ({allocationPercentage}%)
-                              </span>
-                            </span>
-                          </div>
-
-                          <div className="bg-white p-2.5 rounded-lg border border-neutral-200 shadow-2xs">
-                            <span className="text-[10px] text-neutral-500 font-bold uppercase block tracking-wider">
-                              Unallocated Buffer
-                            </span>
-                            <span className="font-mono font-bold text-amber-800 text-sm">
-                              {unallocatedQty}{" "}
-                              <span className="text-[11px] font-sans text-neutral-500">{selectedItem?.unit || "KG"}</span>
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Visual Progress Bar */}
-                        <div className="space-y-1">
-                          <div className="w-full bg-neutral-200 h-2.5 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full transition-all duration-300 ${
-                                isOverAllocated
-                                  ? "bg-red-600"
-                                  : allocationPercentage === 100
-                                  ? "bg-emerald-600"
-                                  : "bg-blue-600"
-                              }`}
-                              style={{ width: `${Math.min(100, Math.max(0, allocationPercentage))}%` }}
-                            />
-                          </div>
-                          <div className="flex items-center justify-between text-[11px] text-neutral-500 font-medium">
-                            <span>Store Distribution</span>
-                            <span
-                              className={`font-mono font-bold ${
-                                isOverAllocated
-                                  ? "text-red-600"
-                                  : allocationPercentage === 100
-                                  ? "text-emerald-700"
-                                  : "text-blue-700"
-                              }`}
-                            >
-                              {isOverAllocated ? "⚠️ Over-allocated!" : `${allocationPercentage}% Assigned to Stores`}
-                            </span>
-                          </div>
-                        </div>
-
-                        {isOverAllocated && (
-                          <div className="flex items-center gap-2 p-2.5 bg-red-100 text-red-800 text-xs rounded-lg border border-red-200 font-semibold">
-                            <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
-                            <span>
-                              Store allocations ({totalAllocatedQty} {selectedItem?.unit || "KG"}) exceed batch quantity ({totalMfgQty} {selectedItem?.unit || "KG"}). Please reduce quantities.
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Store Allocation Rows */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-xs text-neutral-600 font-semibold">
-                          <span>Assigned Stores:</span>
-                          <span className="text-[11px] text-neutral-400">
-                            Enter quantity per store
-                          </span>
-                        </div>
-
-                        {storeAllocations.length === 0 ? (
-                          <div className="p-6 text-center border-2 border-dashed border-neutral-200 rounded-xl bg-neutral-50/50 space-y-2">
-                            <Store className="w-8 h-8 text-neutral-300 mx-auto" />
-                            <p className="text-xs font-bold text-neutral-700">No Stores Added Yet</p>
-                            <p className="text-[11px] text-neutral-500 max-w-sm mx-auto">
-                              Select a store from below to arrange batch stock for your branch outlets, or add all available stores.
-                            </p>
-                            {stores.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={handleAddAllStores}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-neutral-300 text-neutral-700 hover:bg-neutral-100 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer mt-1"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Add All Available Stores ({stores.length})</span>
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-xl overflow-hidden max-h-[260px] overflow-y-auto">
-                            {storeAllocations.map((alloc) => {
-                              const storeObj = stores.find((s) => s.id === alloc.storeId);
-                              const storeQtyNum = Number(alloc.quantity) || 0;
-                              const storePct = totalMfgQty > 0 ? Math.round((storeQtyNum / totalMfgQty) * 100) : 0;
-
-                              return (
-                                <div
-                                  key={alloc.storeId}
-                                  className="p-3 bg-white hover:bg-neutral-50/70 flex items-center justify-between gap-3 transition-colors"
-                                >
-                                  {/* Store details */}
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <Store className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
-                                      <strong className="text-xs font-bold text-neutral-900 truncate">
-                                        {alloc.storeName}
-                                      </strong>
-                                      {storeObj?.isMainBranch && (
-                                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold border border-amber-200">
-                                          Main Branch
-                                        </span>
-                                      )}
-                                    </div>
-                                    {storeObj?.address && (
-                                      <p className="text-[10px] text-neutral-400 truncate mt-0.5">
-                                        {storeObj.address}
-                                      </p>
-                                    )}
-                                  </div>
-
-                                  {/* Quantity input & quick actions */}
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <div className="relative flex items-center">
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        step="any"
-                                        placeholder="Qty"
-                                        value={alloc.quantity}
-                                        onChange={(e) =>
-                                          handleStoreQtyChange(
-                                            alloc.storeId,
-                                            e.target.value === "" ? "" : Number(e.target.value)
-                                          )
-                                        }
-                                        className="w-24 bg-white text-xs font-bold font-mono text-neutral-900 py-1.5 px-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900"
-                                      />
-                                      <span className="ml-1 text-[11px] font-semibold text-neutral-500">
-                                        {selectedItem?.unit || "KG"}
-                                      </span>
-                                    </div>
-
-                                    {/* Portion % pill */}
-                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600 font-semibold w-10 text-center">
-                                      {storePct}%
-                                    </span>
-
-                                    {/* Fill Remaining Quick Button */}
-                                    {unallocatedQty > 0 && alloc.quantity !== totalMfgQty && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleFillRemaining(alloc.storeId)}
-                                        className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-[10px] font-bold rounded-md border border-neutral-200 cursor-pointer transition-colors"
-                                        title="Fill this store with the remaining unallocated quantity"
-                                      >
-                                        Fill Rem.
-                                      </button>
-                                    )}
-
-                                    {/* Delete store row */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemoveStoreAllocation(alloc.storeId)}
-                                      className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
-                                      title="Remove Store from Allocation"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Store Picker & Quick Action Controls */}
-                      <div className="pt-2 border-t border-neutral-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                        {/* Selector for stores not yet added */}
-                        <div className="flex items-center gap-2 flex-1">
-                          <select
-                            value={selectedStoreToAdd}
-                            onChange={(e) => handleAddStoreAllocation(e.target.value)}
-                            className="flex-1 bg-white text-xs text-neutral-800 p-2 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 cursor-pointer"
-                          >
-                            <option value="">+ Select a store to arrange stock...</option>
-                            {stores
-                              .filter((s) => s.status !== "Inactive" && !storeAllocations.some((a) => a.storeId === s.id))
-                              .map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {s.name} {s.isMainBranch ? "⭐ (Main Branch)" : ""} {s.city ? `- ${s.city}` : ""}
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-
-                        {/* Quick options */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {stores.filter((s) => s.status !== "Inactive" && !storeAllocations.some((a) => a.storeId === s.id)).length > 0 && (
-                            <button
-                              type="button"
-                              onClick={handleAddAllStores}
-                              className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-[11px] font-semibold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
-                            >
-                              + Add All Stores
-                            </button>
-                          )}
-
-                          {storeAllocations.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setStoreAllocations([])}
-                              className="px-2.5 py-1.5 text-neutral-400 hover:text-red-600 text-[11px] font-semibold cursor-pointer"
-                            >
-                              Clear
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                  {/* Notes (Optional) */}
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      Batch Notes (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Morning Shift / Master Chef Batch"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      disabled={savingBatch}
+                      className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900 shadow-2xs"
+                    />
                   </div>
                 </div>
 
                 {/* Modal Footer */}
-                <div className="p-4 px-6 border-t border-neutral-200 bg-neutral-50 flex flex-col sm:flex-row items-center justify-between gap-3 rounded-b-2xl">
+                <div className="p-4 px-6 border-t border-neutral-200 bg-neutral-50 flex items-center justify-between gap-3 rounded-b-2xl">
                   <div className="text-xs text-neutral-600">
-                    {storeAllocations.length > 0 ? (
-                      <span>
-                        Distributing <strong className="font-mono text-neutral-900">{totalAllocatedQty} {selectedItem?.unit || "KG"}</strong> across <strong className="text-neutral-900">{storeAllocations.filter(a => Number(a.quantity) > 0).length}</strong> store(s)
-                        {unallocatedQty > 0 ? (
-                          <span> (<strong className="font-mono text-amber-800">{unallocatedQty} {selectedItem?.unit || "KG"}</strong> buffer stock)</span>
-                        ) : null}
-                      </span>
-                    ) : (
-                      <span className="text-neutral-500">
-                        Entire batch of <strong className="font-mono text-neutral-900">{totalMfgQty} {selectedItem?.unit || "KG"}</strong> will be kept as central factory stock.
-                      </span>
-                    )}
+                    Total Quantity:{" "}
+                    <strong className="font-mono text-neutral-900">
+                      {manufacturedQuantity || 0} {selectedItem?.unit || "KG"}
+                    </strong>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -1617,7 +1224,7 @@ export default function ItemBatchesPage() {
                     </button>
                     <button
                       type="submit"
-                      disabled={savingBatch || !selectedItem || manufacturedQuantity === "" || isOverAllocated}
+                      disabled={savingBatch || !selectedItem || manufacturedQuantity === ""}
                       className="flex items-center gap-1.5 px-5 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
                     >
                       {savingBatch && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
