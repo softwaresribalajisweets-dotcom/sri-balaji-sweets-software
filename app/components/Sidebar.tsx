@@ -21,6 +21,7 @@ import {
   Receipt,
   ShoppingBag,
   Users,
+  UserCheck,
 } from "lucide-react";
 
 interface NavItem {
@@ -96,6 +97,11 @@ const navItems: NavItem[] = [
     name: "Employees",
     href: "/employees",
     icon: Users,
+  },
+  {
+    name: "Employee Attendance",
+    href: "/employee-attendance",
+    icon: UserCheck,
     badge: "New",
   },
   {

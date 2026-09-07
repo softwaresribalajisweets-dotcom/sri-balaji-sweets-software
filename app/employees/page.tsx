@@ -37,6 +37,8 @@ import {
   Check,
   Power,
   RotateCcw,
+  Navigation,
+  ExternalLink,
 } from "lucide-react";
 
 export interface Employee {
@@ -46,6 +48,8 @@ export interface Employee {
   email?: string;
   city: string;
   address: string;
+  latitude?: number | string;
+  longitude?: number | string;
   wageType: "monthly" | "daily";
   salary: number; // monthly salary or per-day amount
   photoUrl: string;
@@ -76,6 +80,9 @@ export default function EmployeesPage() {
   const [email, setEmail] = useState("");
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [wageType, setWageType] = useState<"monthly" | "daily">("monthly");
   const [salary, setSalary] = useState<string>("");
   const [status, setStatus] = useState<"Active" | "Inactive">("Active");
@@ -204,6 +211,37 @@ export default function EmployeesPage() {
     }
   };
 
+  // Helper to fetch GPS Coordinates via HTML5 Geolocation
+  const handleGetGPSLocation = () => {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      alert("Geolocation is not supported by your browser or device.");
+      return;
+    }
+
+    setIsFetchingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude.toFixed(6);
+        const lng = position.coords.longitude.toFixed(6);
+        setLatitude(lat);
+        setLongitude(lng);
+        setIsFetchingLocation(false);
+      },
+      (error) => {
+        console.error("GPS location error:", error);
+        alert(
+          `Could not get GPS location: ${error.message}. Please verify device location permissions.`
+        );
+        setIsFetchingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    );
+  };
+
   // Reset form
   const resetForm = () => {
     setName("");
@@ -211,6 +249,9 @@ export default function EmployeesPage() {
     setEmail("");
     setCity("");
     setAddress("");
+    setLatitude("");
+    setLongitude("");
+    setIsFetchingLocation(false);
     setWageType("monthly");
     setSalary("");
     setStatus("Active");
@@ -235,6 +276,8 @@ export default function EmployeesPage() {
     setEmail(emp.email || "");
     setCity(emp.city);
     setAddress(emp.address);
+    setLatitude(emp.latitude !== undefined && emp.latitude !== null ? String(emp.latitude) : "");
+    setLongitude(emp.longitude !== undefined && emp.longitude !== null ? String(emp.longitude) : "");
     setWageType(emp.wageType);
     setSalary(emp.salary.toString());
     setStatus(emp.status);
@@ -303,12 +346,14 @@ export default function EmployeesPage() {
 
       setSaveStepText("Saving employee records...");
 
-      const employeePayload = {
+      const employeePayload: any = {
         name: name.trim(),
         mobile: mobile.trim(),
         email: email.trim() || "",
         city: city.trim(),
         address: address.trim(),
+        latitude: latitude ? String(latitude).trim() : "",
+        longitude: longitude ? String(longitude).trim() : "",
         wageType: wageType,
         salary: Number(salary),
         photoUrl: finalPhotoUrl,
@@ -652,6 +697,20 @@ export default function EmployeesPage() {
                         <p className="text-[11px] text-neutral-500 truncate" title={emp.address}>
                           {emp.address}
                         </p>
+                        {emp.latitude && emp.longitude && (
+                          <a
+                            href={`https://www.google.com/maps?q=${emp.latitude},${emp.longitude}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] font-mono text-blue-600 hover:text-blue-800 hover:underline mt-0.5"
+                            title="Open GPS location in Google Maps"
+                          >
+                            <Navigation className="w-2.5 h-2.5 text-blue-500" />
+                            <span>
+                              {emp.latitude}, {emp.longitude}
+                            </span>
+                          </a>
+                        )}
                       </td>
 
                       {/* Wage Type & Salary */}
@@ -782,6 +841,19 @@ export default function EmployeesPage() {
                         {emp.city} — {emp.address}
                       </span>
                     </div>
+                    {emp.latitude && emp.longitude && (
+                      <div className="flex items-center gap-1 text-[10px] font-mono text-blue-600">
+                        <Navigation className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                        <a
+                          href={`https://www.google.com/maps?q=${emp.latitude},${emp.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline truncate"
+                        >
+                          GPS: {emp.latitude}, {emp.longitude}
+                        </a>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1016,6 +1088,84 @@ export default function EmployeesPage() {
                   />
                 </div>
 
+                {/* GPS Coordinates Section */}
+                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold text-neutral-800 block">
+                        GPS Location Coordinates
+                      </span>
+                      <span className="text-[10px] text-neutral-500">
+                        Capture device location or enter coordinates manually
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isFetchingLocation}
+                      onClick={handleGetGPSLocation}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-white text-[11px] font-semibold rounded-lg shadow-2xs cursor-pointer disabled:opacity-50 transition-colors"
+                    >
+                      {isFetchingLocation ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                          <span>Fetching GPS...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Navigation className="w-3 h-3 text-amber-400" />
+                          <span>Get GPS Location</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                    <div>
+                      <label className="text-[10px] font-bold text-neutral-600 block mb-0.5">
+                        Latitude
+                      </label>
+                      <input
+                        type="text"
+                        value={latitude}
+                        onChange={(e) => setLatitude(e.target.value)}
+                        placeholder="e.g. 17.385044"
+                        className="w-full px-2.5 py-1.5 font-mono text-xs rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-500 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-neutral-600 block mb-0.5">
+                        Longitude
+                      </label>
+                      <input
+                        type="text"
+                        value={longitude}
+                        onChange={(e) => setLongitude(e.target.value)}
+                        placeholder="e.g. 78.486671"
+                        className="w-full px-2.5 py-1.5 font-mono text-xs rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-500 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {latitude && longitude && (
+                    <div className="pt-1 flex items-center justify-between text-[11px]">
+                      <span className="text-emerald-700 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Coordinates captured</span>
+                      </span>
+                      <a
+                        href={`https://www.google.com/maps?q=${latitude},${longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1 hover:underline"
+                      >
+                        <span>View on Google Maps</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+
                 {/* 3. Wage Structure & Salary */}
                 <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200 space-y-2.5">
                   <label className="text-[11px] font-bold text-neutral-800 block">
@@ -1205,6 +1355,26 @@ export default function EmployeesPage() {
                       <p className="text-[11px] text-neutral-500">{viewingEmployee.address}</p>
                     </div>
                   </div>
+
+                  {viewingEmployee.latitude && viewingEmployee.longitude && (
+                    <div className="flex items-center justify-between p-2 bg-blue-50/70 border border-blue-200/80 rounded-lg text-[11px]">
+                      <div className="flex items-center gap-1.5 text-blue-900 font-mono">
+                        <Navigation className="w-3 h-3 text-blue-600 shrink-0" />
+                        <span>
+                          {viewingEmployee.latitude}, {viewingEmployee.longitude}
+                        </span>
+                      </div>
+                      <a
+                        href={`https://www.google.com/maps?q=${viewingEmployee.latitude},${viewingEmployee.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 font-semibold hover:underline inline-flex items-center gap-0.5 text-[10px]"
+                      >
+                        <span>Open Maps</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </div>
+                  )}
                 </div>
               </div>
 
