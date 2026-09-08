@@ -40,6 +40,14 @@ import {
   Clock,
   Calendar,
   Check,
+  Barcode,
+  ScanLine,
+  Volume2,
+  VolumeX,
+  Info,
+  Zap,
+  CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 
 interface StoreBranch {
@@ -180,6 +188,85 @@ export default function PosBillingPage() {
 
   // Completed Receipt Modal State
   const [completedSale, setCompletedSale] = useState<SettledSaleDoc | null>(null);
+
+  // Barcode Scanner & Billing State
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
+  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
+  const [autoFocusScanner, setAutoFocusScanner] = useState(true);
+  const [lastScanMessage, setLastScanMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+    subtext?: string;
+  } | null>(null);
+  const [showBarcodeHelpModal, setShowBarcodeHelpModal] = useState(false);
+  const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Audio Feedback functions
+  const playScanBeep = () => {
+    if (!isSoundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(1400, ctx.currentTime);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+    } catch {
+      // Audio not permitted or unsupported
+    }
+  };
+
+  const playErrorBeep = () => {
+    if (!isSoundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(320, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    } catch {
+      // Audio not permitted or unsupported
+    }
+  };
+
+  // Keyboard shortcut listener (F2 to focus barcode scanner)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        barcodeInputRef.current?.focus();
+        barcodeInputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Auto focus scanner on mount
+  useEffect(() => {
+    if (autoFocusScanner) {
+      const timer = setTimeout(() => {
+        barcodeInputRef.current?.focus();
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [autoFocusScanner]);
 
   // Subscribe to Stores, Items, Batches, and Customers
   useEffect(() => {
@@ -376,6 +463,219 @@ export default function PosBillingPage() {
   const handleRemoveFromCart = (cartItemId: string) => {
     setCart((prev) => prev.filter((it) => it.id !== cartItemId));
   };
+
+  // Barcode processor: parses barcodeID*weight*batchNumber (e.g. 7707*250*1)
+  const handleProcessBarcode = (rawCode: string) => {
+    const trimmed = rawCode.trim();
+    if (!trimmed) return;
+
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+    }
+
+    // Format: barcodeId*weight*batchCode (e.g. 7707*250*1)
+    const parts = trimmed.split("*").map((p) => p.trim());
+    const scannedBarcodeId = parts[0];
+    const scannedWeightRaw = parts[1] || "";
+    const scannedBatchRaw = parts[2] || "";
+
+    // 1. Look up item by barcodeId, ID, or Name
+    const product = items.find(
+      (p) =>
+        (p.barcodeId && p.barcodeId.toLowerCase() === scannedBarcodeId.toLowerCase()) ||
+        p.id.toLowerCase() === scannedBarcodeId.toLowerCase() ||
+        p.name.toLowerCase() === scannedBarcodeId.toLowerCase()
+    );
+
+    if (!product) {
+      playErrorBeep();
+      setLastScanMessage({
+        type: "error",
+        text: `Item Not Found for Barcode: "${scannedBarcodeId}"`,
+        subtext: "Please verify product barcode ID in catalog or item master.",
+      });
+      scanTimeoutRef.current = setTimeout(() => setLastScanMessage(null), 5000);
+      return;
+    }
+
+    // 2. Parse quantity / weight
+    let qty = 1;
+    let isGramConversion = false;
+    const unitLower = (product.unit || "KG").toLowerCase();
+
+    if (scannedWeightRaw) {
+      const numWeight = parseFloat(scannedWeightRaw);
+      if (!isNaN(numWeight) && numWeight > 0) {
+        if (
+          unitLower === "piece" ||
+          unitLower === "pc" ||
+          unitLower === "box" ||
+          unitLower === "pkt"
+        ) {
+          qty = numWeight;
+        } else if (unitLower === "kg" || unitLower === "kgs") {
+          // Standard Sri Balaji Sweets sticker weights: 100, 250, 400, 500, 800, 1000 are in grams
+          if (numWeight >= 20) {
+            qty = Math.round((numWeight / 1000) * 1000) / 1000;
+            isGramConversion = true;
+          } else {
+            qty = numWeight;
+          }
+        } else {
+          qty = numWeight;
+        }
+      }
+    } else {
+      qty = unitLower === "piece" || unitLower === "pc" ? 1 : 1;
+    }
+
+    // 3. Look up batch
+    const storeBatches = getStoreBatchesForItem(product.id, product.barcodeId);
+    let matchedBatch: ItemBatch | undefined;
+
+    if (scannedBatchRaw) {
+      // Find matching batch in database
+      matchedBatch = batches.find(
+        (b) =>
+          (b.itemId === product.id ||
+            (product.barcodeId && b.itemBarcodeId === product.barcodeId)) &&
+          (String(b.batchCode) === scannedBatchRaw ||
+            b.batchCodeString?.toLowerCase() === scannedBatchRaw.toLowerCase() ||
+            b.id === scannedBatchRaw)
+      );
+    }
+
+    // If batch wasn't found or not specified, fallback to first available store batch if any
+    if (!matchedBatch && storeBatches.length > 0) {
+      matchedBatch = storeBatches[0];
+    }
+
+    // Batch allocation
+    let batchAllocation: BatchAllocationItem;
+    if (matchedBatch) {
+      const alloc = (matchedBatch.storeAllocations || []).find(
+        (a) => a.storeId === selectedStoreId
+      );
+      const availInStore = alloc ? Number(alloc.quantity) || 0 : 0;
+      batchAllocation = {
+        batchId: matchedBatch.id,
+        batchCode: matchedBatch.batchCode,
+        batchCodeString: matchedBatch.batchCodeString || `Batch #${matchedBatch.batchCode}`,
+        availableInStore: availInStore,
+        allocatedQty: qty,
+        expiryDate: matchedBatch.expiryDate,
+        manufacturingDate: matchedBatch.manufacturingDate,
+      };
+    } else {
+      const batchNum = Number(scannedBatchRaw) || 1;
+      batchAllocation = {
+        batchId: `batch_${batchNum}_${Date.now()}`,
+        batchCode: batchNum,
+        batchCodeString: scannedBatchRaw ? `Batch #${scannedBatchRaw}` : "Batch #1",
+        availableInStore: 0,
+        allocatedQty: qty,
+      };
+    }
+
+    // Line calculations
+    const unitPrice = product.price;
+    const lineAmount = Math.round(qty * unitPrice * 100) / 100;
+
+    // Add to Cart
+    setCart((prev) => {
+      // Check if identical item with same batch already exists in cart
+      const existingIdx = prev.findIndex(
+        (item) =>
+          item.itemId === product.id &&
+          item.batchAllocations.length === 1 &&
+          item.batchAllocations[0].batchCode === batchAllocation.batchCode
+      );
+
+      if (existingIdx > -1) {
+        const updated = [...prev];
+        const existing = updated[existingIdx];
+        const newTotalQty = Math.round((existing.totalQuantity + qty) * 1000) / 1000;
+        const newTotalAmount = Math.round(newTotalQty * unitPrice * 100) / 100;
+        updated[existingIdx] = {
+          ...existing,
+          totalQuantity: newTotalQty,
+          totalAmount: newTotalAmount,
+          batchAllocations: [
+            {
+              ...existing.batchAllocations[0],
+              allocatedQty: newTotalQty,
+            },
+          ],
+        };
+        return updated;
+      } else {
+        const newCartItem: CartItem = {
+          id: `${product.id}_${batchAllocation.batchCode}_${Date.now()}`,
+          itemId: product.id,
+          itemName: product.name,
+          barcodeId: product.barcodeId,
+          category: product.category,
+          unit: product.unit || "KG",
+          unitPrice: unitPrice,
+          totalQuantity: qty,
+          totalAmount: lineAmount,
+          batchAllocations: [batchAllocation],
+        };
+        return [...prev, newCartItem];
+      }
+    });
+
+    // Audio & Visual notification
+    playScanBeep();
+    const weightLabel = isGramConversion
+      ? `${scannedWeightRaw}g`
+      : `${qty} ${product.unit || "KG"}`;
+
+    setLastScanMessage({
+      type: "success",
+      text: `✓ Added: ${product.name} (${weightLabel}) - ${batchAllocation.batchCodeString}`,
+      subtext: `₹${lineAmount} • Scanned barcode: ${trimmed}`,
+    });
+
+    scanTimeoutRef.current = setTimeout(() => {
+      setLastScanMessage(null);
+    }, 4500);
+
+    // Clear input & refocus
+    setBarcodeInput("");
+    if (autoFocusScanner) {
+      setTimeout(() => {
+        barcodeInputRef.current?.focus();
+      }, 50);
+    }
+  };
+
+  // Quick testable sample barcodes from current store
+  const storeSampleBarcodes = useMemo(() => {
+    if (!selectedStoreId) return [];
+    const samples: Array<{
+      code: string;
+      label: string;
+      item: ItemProduct;
+      batch: ItemBatch;
+    }> = [];
+
+    items.forEach((it) => {
+      const itemBatches = getStoreBatchesForItem(it.id, it.barcodeId);
+      if (itemBatches.length > 0 && it.barcodeId) {
+        const b = itemBatches[0];
+        const weight = it.unit?.toLowerCase() === "piece" ? "1" : "250";
+        samples.push({
+          code: `${it.barcodeId}*${weight}*${b.batchCode}`,
+          label: `${it.name} (${weight}${it.unit?.toLowerCase() === "piece" ? "PC" : "g"}) - Batch #${b.batchCode}`,
+          item: it,
+          batch: b,
+        });
+      }
+    });
+
+    return samples.slice(0, 6);
+  }, [items, batches, selectedStoreId]);
 
   // Cart financial calculations
   const cartSubtotal = cart.reduce((sum, it) => sum + it.totalAmount, 0);
@@ -607,6 +907,181 @@ export default function PosBillingPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* ============================================================== */}
+        {/* BARCODE BILLING & SCANNER STATION BAR                           */}
+        {/* ============================================================== */}
+        <div className="bg-neutral-900 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-neutral-800 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Title & Status */}
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-neutral-800 text-emerald-400 border border-neutral-700 shadow-inner flex items-center justify-center">
+                <Barcode className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
+                    <span>Barcode Reader Billing Station</span>
+                  </h2>
+                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Scanner Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Read sticker barcode format: <span className="font-mono text-emerald-300 font-semibold">BarcodeID*Weight*Batch#</span> (e.g. <span className="font-mono text-neutral-300">7707*250*1</span>)
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Controls */}
+            <div className="flex items-center gap-2 self-end sm:self-center">
+              <button
+                type="button"
+                onClick={() => setIsSoundEnabled(!isSoundEnabled)}
+                className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                  isSoundEnabled
+                    ? "bg-neutral-800 border-neutral-700 text-emerald-400 hover:bg-neutral-700"
+                    : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700"
+                }`}
+                title={isSoundEnabled ? "Beep sound ON" : "Beep sound Muted"}
+              >
+                {isSoundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                <span className="text-[11px] hidden md:inline">{isSoundEnabled ? "Sound ON" : "Muted"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAutoFocusScanner(!autoFocusScanner)}
+                className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                  autoFocusScanner
+                    ? "bg-neutral-800 border-neutral-700 text-blue-400 hover:bg-neutral-700"
+                    : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700"
+                }`}
+                title="Keep scanner input auto-focused after every scan"
+              >
+                <ScanLine className="w-4 h-4" />
+                <span className="text-[11px] hidden md:inline">Auto-Focus {autoFocusScanner ? "ON" : "OFF"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowBarcodeHelpModal(true)}
+                className="p-2 rounded-xl bg-neutral-800 border border-neutral-700 text-neutral-300 hover:text-white hover:bg-neutral-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Barcode Billing Help & Info"
+              >
+                <Info className="w-4 h-4 text-neutral-400" />
+                <span className="text-[11px] hidden md:inline">Guide</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Scanner Input Row */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleProcessBarcode(barcodeInput);
+            }}
+            className="flex flex-col sm:flex-row items-stretch gap-2 pt-1"
+          >
+            <div className="relative flex-1">
+              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none flex items-center gap-1.5">
+                <Barcode className="w-4 h-4 text-emerald-400" />
+              </div>
+              <input
+                ref={barcodeInputRef}
+                type="text"
+                placeholder="Scan barcode with reader or type '7707*250*1' & press Enter..."
+                value={barcodeInput}
+                onChange={(e) => setBarcodeInput(e.target.value)}
+                className="w-full bg-neutral-950 text-white font-mono text-sm pl-10 pr-24 py-3 rounded-xl border border-neutral-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 placeholder:text-neutral-500 placeholder:font-sans"
+              />
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {barcodeInput && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBarcodeInput("");
+                      barcodeInputRef.current?.focus();
+                    }}
+                    className="text-neutral-500 hover:text-white p-1 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <kbd className="hidden sm:inline-block text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400">
+                  F2 Focus
+                </kbd>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!barcodeInput.trim()}
+              className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all shrink-0"
+            >
+              <Zap className="w-4 h-4 fill-white" />
+              <span>⚡ Add to Bill</span>
+            </button>
+          </form>
+
+          {/* Real-time Scan Notification Alert */}
+          {lastScanMessage && (
+            <div
+              className={`p-3 rounded-xl border flex items-start justify-between gap-3 text-xs transition-all ${
+                lastScanMessage.type === "success"
+                  ? "bg-emerald-950/80 border-emerald-700/80 text-emerald-100"
+                  : "bg-rose-950/80 border-rose-700/80 text-rose-100"
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                {lastScanMessage.type === "success" ? (
+                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <strong className="font-bold block">{lastScanMessage.text}</strong>
+                  {lastScanMessage.subtext && (
+                    <span className="text-[11px] opacity-80 block font-mono mt-0.5">
+                      {lastScanMessage.subtext}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLastScanMessage(null)}
+                className="text-white/60 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Quick-Click Sample Barcodes from Current Store */}
+          {storeSampleBarcodes.length > 0 && (
+            <div className="pt-2 border-t border-neutral-800 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-[10px] uppercase font-bold text-neutral-400 mr-1 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                Quick Test Scans:
+              </span>
+              {storeSampleBarcodes.map((sample) => (
+                <button
+                  key={sample.code}
+                  type="button"
+                  onClick={() => handleProcessBarcode(sample.code)}
+                  className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 text-[11px] font-mono flex items-center gap-1.5 transition-all cursor-pointer group"
+                  title={`Simulate scanning ${sample.code}`}
+                >
+                  <Barcode className="w-3 h-3 text-emerald-400 group-hover:scale-110 transition-transform" />
+                  <span>{sample.code}</span>
+                  <span className="text-[10px] text-neutral-400 font-sans">({sample.item.name})</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Main 2-Column POS Layout */}
@@ -1401,6 +1876,91 @@ export default function PosBillingPage() {
                   className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg cursor-pointer shadow-xs"
                 >
                   Start New Sale
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* BARCODE BILLING GUIDE MODAL                                    */}
+        {/* ============================================================== */}
+        {showBarcodeHelpModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden">
+              <div className="flex items-center justify-between p-4 px-6 border-b border-neutral-100 bg-neutral-50">
+                <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                  <Barcode className="w-4 h-4 text-emerald-600" />
+                  <span>How Barcode Billing Works</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowBarcodeHelpModal(false)}
+                  className="text-neutral-400 hover:text-neutral-800 p-1 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs text-neutral-700">
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1">
+                  <div className="font-bold text-emerald-950 flex items-center gap-1.5">
+                    <CheckCircle className="w-4 h-4 text-emerald-600" />
+                    <span>Encoded Barcode Format</span>
+                  </div>
+                  <div className="font-mono text-xs font-bold text-emerald-900 bg-white/80 p-2 rounded border border-emerald-200">
+                    [BarcodeID] * [Weight] * [BatchNumber]
+                  </div>
+                  <p className="text-[11px] text-emerald-800">
+                    Generated automatically by the Sri Balaji Sweets Barcode Generator module.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-bold text-neutral-900">Format Breakdown:</h4>
+                  <ul className="space-y-1.5 list-disc pl-4 text-[11px] text-neutral-600">
+                    <li>
+                      <strong className="text-neutral-900">BarcodeID:</strong> Item barcode ID (e.g. <code>7707</code>).
+                    </li>
+                    <li>
+                      <strong className="text-neutral-900">Weight:</strong> Weight in grams for KG items (e.g. <code>250</code> = 0.25 KG, <code>500</code> = 0.5 KG, <code>1000</code> = 1.0 KG) or unit count (e.g. <code>1</code> for piece items).
+                    </li>
+                    <li>
+                      <strong className="text-neutral-900">BatchNumber:</strong> Manufacturing batch number (e.g. <code>1</code>, <code>2</code>) allocated to the current store branch.
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1.5">
+                  <h4 className="font-bold text-neutral-900 text-xs">Examples:</h4>
+                  <div className="space-y-1 font-mono text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-purple-700 font-bold">7707*250*1</span>
+                      <span className="text-neutral-600">Kaju Katli, 250g box, Batch #1</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-purple-700 font-bold">7707*500*2</span>
+                      <span className="text-neutral-600">Kaju Katli, 500g box, Batch #2</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-purple-700 font-bold">1001*1*1</span>
+                      <span className="text-neutral-600">Special Sweet Box, 1 PC, Batch #1</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-neutral-500">
+                  💡 <strong>Continuous Scanning:</strong> Connect any USB or Bluetooth handheld barcode scanner. As soon as you scan a barcode sticker, the item and batch are added to the order summary immediately and the scanner remains focused for the next item!
+                </div>
+              </div>
+
+              <div className="p-4 px-6 border-t border-neutral-100 bg-neutral-50 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowBarcodeHelpModal(false)}
+                  className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg font-bold text-xs cursor-pointer shadow-xs"
+                >
+                  Got It
                 </button>
               </div>
             </div>
