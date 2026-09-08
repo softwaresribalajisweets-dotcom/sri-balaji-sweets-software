@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import {
   Store,
   Printer,
+  Barcode,
   Usb,
   Bluetooth,
   CheckCircle2,
@@ -21,20 +22,31 @@ export default function Header() {
     connectedPrinter,
     isConnecting,
     error,
+    printerMode,
+    setPrinterMode,
     connectUSB,
     connectBluetooth,
     disconnectPrinter,
     printTestPage,
+    printTestSticker,
   } = usePrinter();
 
   const [isPrinterModalOpen, setIsPrinterModalOpen] = useState(false);
-  const [testPrintSuccess, setTestPrintSuccess] = useState(false);
+  const [testPrintSuccess, setTestPrintSuccess] = useState<string | null>(null);
 
   const handleTestPrint = async () => {
     const ok = await printTestPage();
     if (ok) {
-      setTestPrintSuccess(true);
-      setTimeout(() => setTestPrintSuccess(false), 3000);
+      setTestPrintSuccess("Test receipt sent successfully to printer!");
+      setTimeout(() => setTestPrintSuccess(null), 3000);
+    }
+  };
+
+  const handleTestStickerPrint = async () => {
+    const ok = await printTestSticker();
+    if (ok) {
+      setTestPrintSuccess("Test barcode sticker sent successfully to printer!");
+      setTimeout(() => setTestPrintSuccess(null), 3000);
     }
   };
 
@@ -121,10 +133,10 @@ export default function Header() {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-neutral-900">
-                    Thermal Printer Setup
+                    Thermal & Barcode Printer Setup
                   </h3>
                   <p className="text-[11px] text-neutral-500">
-                    WebUSB & Web Bluetooth Direct Printing
+                    WebUSB & Web Bluetooth Direct Printing (No Dialogs)
                   </p>
                 </div>
               </div>
@@ -161,8 +173,8 @@ export default function Header() {
                     </span>
                     <strong className="text-xs">
                       {connectedPrinter?.isConnected
-                        ? `Connected via ${connectedPrinter.type.toUpperCase()}: ${connectedPrinter.name}`
-                        : "No Direct Thermal Printer Connected"}
+                        ? `Connected: ${connectedPrinter.name} (${connectedPrinter.type.toUpperCase()})`
+                        : "No Direct Printer Connected"}
                     </strong>
                   </div>
                 </div>
@@ -190,14 +202,14 @@ export default function Header() {
               {testPrintSuccess && (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-[11px] flex items-center gap-2 font-bold">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Test print sent successfully to printer!</span>
+                  <span>{testPrintSuccess}</span>
                 </div>
               )}
 
               {/* Connect Buttons */}
               <div className="space-y-2">
                 <label className="block font-bold text-neutral-700 text-xs">
-                  Connect Direct Thermal Printer:
+                  Connect Direct Thermal / Barcode Printer:
                 </label>
                 <div className="grid grid-cols-2 gap-2.5">
                   {/* WebUSB Button */}
@@ -217,7 +229,7 @@ export default function Header() {
                       Connect WebUSB
                     </span>
                     <span className="text-[10px] text-neutral-500">
-                      Standard POS USB Printers
+                      POS & USB Label Printers
                     </span>
                   </button>
 
@@ -244,27 +256,85 @@ export default function Header() {
                 </div>
               </div>
 
-              {/* Actions: Test Print & System Print Fallback */}
-              <div className="pt-2 border-t border-neutral-100 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleTestPrint}
-                  className="flex-1 py-2.5 px-3 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Print Test Receipt</span>
-                </button>
+              {/* Printer Protocol Mode Selection */}
+              <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-xl space-y-1.5">
+                <label className="block text-[11px] font-bold text-neutral-700">
+                  Printer Protocol / Command Set:
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPrinterMode("auto")}
+                    className={`py-1.5 px-2 text-[10px] font-bold rounded-lg border transition-all cursor-pointer ${
+                      printerMode === "auto"
+                        ? "bg-neutral-900 text-white border-neutral-900"
+                        : "bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100"
+                    }`}
+                  >
+                    Auto (Raster)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrinterMode("escpos")}
+                    className={`py-1.5 px-2 text-[10px] font-bold rounded-lg border transition-all cursor-pointer ${
+                      printerMode === "escpos"
+                        ? "bg-neutral-900 text-white border-neutral-900"
+                        : "bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100"
+                    }`}
+                  >
+                    ESC/POS (POS)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrinterMode("tspl")}
+                    className={`py-1.5 px-2 text-[10px] font-bold rounded-lg border transition-all cursor-pointer ${
+                      printerMode === "tspl"
+                        ? "bg-neutral-900 text-white border-neutral-900"
+                        : "bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100"
+                    }`}
+                  >
+                    TSPL (Labels)
+                  </button>
+                </div>
+                <p className="text-[9.5px] text-neutral-500 leading-tight">
+                  Use <strong>Auto / ESC/POS</strong> for thermal receipt/POS printers, or <strong>TSPL</strong> for TVS LP 46 / TSC / Xprinter barcode label machines.
+                </p>
+              </div>
+
+              {/* Actions: Test Receipts & Test Barcodes */}
+              <div className="pt-2 border-t border-neutral-100 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestPrint}
+                    disabled={!connectedPrinter?.isConnected}
+                    className="py-2.5 px-3 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Test Receipt</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTestStickerPrint}
+                    disabled={!connectedPrinter?.isConnected}
+                    className="py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Barcode className="w-3.5 h-3.5" />
+                    <span>Test Sticker</span>
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="py-2.5 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl font-bold text-xs cursor-pointer"
+                  className="w-full py-2 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl font-medium text-[11px] cursor-pointer"
                 >
-                  System Print
+                  Open Browser System Print Dialog
                 </button>
               </div>
 
               <p className="text-[10px] text-neutral-400 text-center">
-                Supported on Chrome, Edge, Brave, and Chromium POS terminals.
+                WebUSB & Web Bluetooth work on Chrome, Edge, Brave, and Android POS tablets.
               </p>
             </div>
           </div>

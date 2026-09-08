@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import JsBarcode from "jsbarcode";
 
 export interface ConnectedPrinterInfo {
   type: "usb" | "bluetooth";
@@ -35,30 +36,226 @@ export interface PrintableSaleDoc {
   createdAt?: any;
 }
 
+export interface PrintableBarcodeSticker {
+  businessName: string;
+  itemTitle: string;
+  unitLabel: string;
+  barcodeId: string;
+  batchCode: string | number;
+  encodedBarcode: string; // itembarcodeid*weight*batchnumber
+  mrp: number;
+  quantity: number;
+}
+
+export type PrinterProtocolMode = "escpos" | "tspl" | "auto";
+
 interface PrinterContextType {
   connectedPrinter: ConnectedPrinterInfo | null;
   isConnecting: boolean;
   error: string | null;
+  printerMode: PrinterProtocolMode;
+  setPrinterMode: (mode: PrinterProtocolMode) => void;
   connectUSB: () => Promise<boolean>;
   connectBluetooth: () => Promise<boolean>;
   disconnectPrinter: () => Promise<void>;
   printReceipt: (sale: PrintableSaleDoc) => Promise<boolean>;
+  printBarcodeStickers: (stickers: PrintableBarcodeSticker[], mode?: PrinterProtocolMode) => Promise<boolean>;
   printTestPage: () => Promise<boolean>;
+  printTestSticker: () => Promise<boolean>;
   printRawText: (text: string) => Promise<boolean>;
+  sendBytes: (data: Uint8Array) => Promise<boolean>;
 }
 
 const PrinterContext = createContext<PrinterContextType | undefined>(undefined);
+
+// Helper: Convert Canvas to ESC/POS Monochrome Raster Bit Image (GS v 0)
+export function canvasToEscPosRaster(canvas: HTMLCanvasElement): Uint8Array {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new Uint8Array();
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const data = imgData.data;
+
+  // Width in bytes (must be multiple of 8)
+  const widthBytes = Math.ceil(width / 8);
+  const totalImageBytes = widthBytes * height;
+
+  const header = [
+    0x1b, 0x40,             // ESC @: Init printer
+    0x1b, 0x61, 0x01,       // ESC a 1: Center
+    0x1d, 0x76, 0x30, 0x00, // GS v 0 0: Raster bit image (normal mode)
+    widthBytes & 0xff,
+    (widthBytes >> 8) & 0xff,
+    height & 0xff,
+    (height >> 8) & 0xff,
+  ];
+
+  const rasterData = new Uint8Array(header.length + totalImageBytes + 6);
+  rasterData.set(header, 0);
+
+  let offset = header.length;
+
+  for (let y = 0; y < height; y++) {
+    for (let bx = 0; bx < widthBytes; bx++) {
+      let byteVal = 0;
+      for (let bit = 0; bit < 8; bit++) {
+        const x = bx * 8 + bit;
+        if (x < width) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const a = data[idx + 3];
+          // If pixel is dark and opaque -> black dot (1)
+          const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+          if (a > 128 && brightness < 180) {
+            byteVal |= (1 << (7 - bit));
+          }
+        }
+      }
+      rasterData[offset++] = byteVal;
+    }
+  }
+
+  // Feed 2 lines and clear
+  rasterData[offset++] = 0x1b;
+  rasterData[offset++] = 0x64;
+  rasterData[offset++] = 0x02; // ESC d 2: Feed 2 lines
+  rasterData[offset++] = 0x0a; // LF
+
+  return rasterData;
+}
+
+// Helper: Build ESC/POS raster bitmap for Barcode Sticker
+export function buildEscPosBarcodeSticker(sticker: PrintableBarcodeSticker): Uint8Array {
+  if (typeof document === "undefined") return new Uint8Array();
+
+  const canvas = document.createElement("canvas");
+  const width = 384; // Standard 203 DPI 2-inch width (48 bytes wide)
+  const height = 180;
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new Uint8Array();
+
+  // White Background
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+
+  // Outer Border
+  ctx.strokeStyle = "#000000";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(3, 3, width - 6, height - 6);
+
+  // Left space for pre-printed logo (width 70px)
+  const logoColWidth = 70;
+  const contentX = logoColWidth + (width - logoColWidth) / 2;
+
+  // 1. Business Name (Header)
+  ctx.fillStyle = "#000000";
+  ctx.font = "bold 13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText((sticker.businessName || "SRI BALAJI SWEETS").toUpperCase(), contentX, 22);
+
+  // 2. Item Title (Left) & Unit (Right)
+  ctx.font = "bold 11px sans-serif";
+  ctx.textAlign = "left";
+  const title = (sticker.itemTitle || "SWEET").toUpperCase();
+  const truncatedTitle = title.length > 20 ? title.substring(0, 18) + ".." : title;
+  ctx.fillText(truncatedTitle, logoColWidth + 8, 42);
+
+  ctx.textAlign = "right";
+  ctx.fillText((sticker.unitLabel || "1 PC").toUpperCase(), width - 10, 42);
+
+  // 3. Render Barcode directly to temporary offscreen canvas
+  try {
+    const bcCanvas = document.createElement("canvas");
+    const payload = (sticker.encodedBarcode || `${sticker.barcodeId}*250*${sticker.batchCode}`).toString().trim();
+    JsBarcode(bcCanvas, payload, {
+      format: "CODE128",
+      displayValue: false,
+      margin: 0,
+      height: 34,
+      width: 1.3,
+      lineColor: "#000000",
+    });
+    const barcodeWidth = width - logoColWidth - 18;
+    ctx.drawImage(bcCanvas, logoColWidth + 8, 48, barcodeWidth, 38);
+  } catch (e) {
+    console.warn("JsBarcode raster generation error:", e);
+  }
+
+  // 4. Bottom Row: #BarcodeId • B#BatchCode & MRP
+  ctx.fillStyle = "#000000";
+  ctx.font = "bold 11px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(`#${sticker.barcodeId} • B#${sticker.batchCode}`, logoColWidth + 8, 114);
+
+  ctx.font = "bold 13px sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(`MRP: Rs.${sticker.mrp}/-`, width - 10, 114);
+
+  return canvasToEscPosRaster(canvas);
+}
+
+// Helper: Build Native TSPL-2 commands for dedicated Barcode Label Printers (TSC, Xprinter, TVS, Rongta)
+export function buildTsplBarcodeSticker(sticker: PrintableBarcodeSticker): Uint8Array {
+  const encoder = new TextEncoder();
+  const copies = Math.max(1, sticker.quantity || 1);
+  const cleanTitle = (sticker.itemTitle || "SWEET").replace(/["\r\n]/g, "").toUpperCase();
+  const cleanUnit = (sticker.unitLabel || "1 PC").replace(/["\r\n]/g, "").toUpperCase();
+  const cleanBiz = (sticker.businessName || "SRI BALAJI SWEETS").replace(/["\r\n]/g, "").toUpperCase();
+  const cleanPayload = (sticker.encodedBarcode || `${sticker.barcodeId}*250*${sticker.batchCode}`)
+    .replace(/["\r\n]/g, "")
+    .trim();
+
+  // 50mm x 25mm Label Size, 2mm gap
+  const commands = [
+    "SIZE 50 mm, 25 mm",
+    "GAP 2 mm, 0 mm",
+    "DIRECTION 1",
+    "CLS",
+    `TEXT 380,10,"3",0,1,1,"${cleanBiz}"`,
+    `TEXT 80,36,"2",0,1,1,"${cleanTitle.substring(0, 18)} ${cleanUnit}"`,
+    `BARCODE 80,62,"128",45,1,0,2,2,"${cleanPayload}"`,
+    `TEXT 80,126,"2",0,1,1,"#${sticker.barcodeId} • B#${sticker.batchCode}"`,
+    `TEXT 270,126,"3",0,1,1,"MRP: Rs.${sticker.mrp}/-"`,
+    `PRINT ${copies},1`,
+    "",
+  ].join("\r\n");
+
+  return encoder.encode(commands);
+}
 
 export function PrinterProvider({ children }: { children: ReactNode }) {
   const [connectedPrinter, setConnectedPrinter] = useState<ConnectedPrinterInfo | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [printerMode, setPrinterModeState] = useState<PrinterProtocolMode>("auto");
 
   // Reference to active Bluetooth characteristic or USB endpoint
   const [btCharacteristic, setBtCharacteristic] = useState<any>(null);
   const [usbEndpoint, setUsbEndpoint] = useState<{ device: any; endpointNumber: number } | null>(null);
 
-  // Helper to build ESC/POS commands
+  useEffect(() => {
+    try {
+      const savedMode = localStorage.getItem("sri_balaji_printer_mode") as PrinterProtocolMode;
+      if (savedMode && ["escpos", "tspl", "auto"].includes(savedMode)) {
+        setPrinterModeState(savedMode);
+      }
+    } catch (e) {}
+  }, []);
+
+  const setPrinterMode = (mode: PrinterProtocolMode) => {
+    setPrinterModeState(mode);
+    try {
+      localStorage.setItem("sri_balaji_printer_mode", mode);
+    } catch (e) {}
+  };
+
+  // Helper to build ESC/POS commands for Sales Receipt
   const buildEscPosReceipt = (sale: PrintableSaleDoc): Uint8Array => {
     const encoder = new TextEncoder();
     const commands: number[] = [];
@@ -151,7 +348,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
   const connectUSB = async (): Promise<boolean> => {
     setError(null);
     if (typeof navigator === "undefined" || !(navigator as any).usb) {
-      setError("WebUSB is not supported in this browser. Please use Google Chrome, Edge, or Brave.");
+      setError("WebUSB is not supported in this browser. Please use Google Chrome, Edge, or Brave on Windows/Mac/Linux.");
       return false;
     }
 
@@ -195,7 +392,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
       setUsbEndpoint({ device, endpointNumber });
       setConnectedPrinter({
         type: "usb",
-        name: device.productName || device.manufacturerName || "USB Thermal Printer",
+        name: device.productName || device.manufacturerName || "USB Thermal / Label Printer",
         device,
         isConnected: true,
       });
@@ -224,7 +421,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
       setIsConnecting(true);
       const bluetooth = (navigator as any).bluetooth;
 
-      // Common Thermal Printer Bluetooth GATT Service UUIDs
+      // Common Thermal & Label Printer Bluetooth GATT Service UUIDs
       const commonServices = [
         "000018f0-0000-1000-8000-00805f9b34fb",
         "49535343-fe7d-4ae5-8fa9-9fafd205e455",
@@ -278,13 +475,13 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
       }
 
       if (!writeChar) {
-        throw new Error("Connected to device but no ESC/POS print channel characteristic found.");
+        throw new Error("Connected to device but no writable print characteristic found.");
       }
 
       setBtCharacteristic(writeChar);
       setConnectedPrinter({
         type: "bluetooth",
-        name: device.name || "Bluetooth Thermal Printer",
+        name: device.name || "Bluetooth Thermal / Label Printer",
         device,
         isConnected: true,
       });
@@ -326,13 +523,19 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
 
   // Send raw bytes to connected printer (chunked for bluetooth/usb transfer limits)
   const sendBytes = async (data: Uint8Array): Promise<boolean> => {
-    if (!connectedPrinter) {
+    if (!connectedPrinter || !connectedPrinter.isConnected) {
+      setError("No printer connected.");
       return false;
     }
 
     try {
       if (connectedPrinter.type === "usb" && usbEndpoint) {
-        await usbEndpoint.device.transferOut(usbEndpoint.endpointNumber, data);
+        // WebUSB transfer: chunk in 64-byte packets for maximum USB microcontroller compatibility
+        const chunkSize = 64;
+        for (let i = 0; i < data.length; i += chunkSize) {
+          const chunk = data.slice(i, i + chunkSize);
+          await usbEndpoint.device.transferOut(usbEndpoint.endpointNumber, chunk);
+        }
         return true;
       } else if (connectedPrinter.type === "bluetooth" && btCharacteristic) {
         // Bluetooth BLE packets are typically 20 to 100 bytes chunk size
@@ -344,19 +547,19 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
           } else {
             await btCharacteristic.writeValue(chunk);
           }
-          await new Promise((r) => setTimeout(r, 25));
+          await new Promise((r) => setTimeout(r, 20));
         }
         return true;
       }
     } catch (err: any) {
       console.error("Print send error:", err);
-      setError(`Print failed: ${err.message}`);
+      setError(`Print failed: ${err.message || err}`);
       return false;
     }
     return false;
   };
 
-  // Print formatted receipt
+  // Print formatted sales receipt
   const printReceipt = async (sale: PrintableSaleDoc): Promise<boolean> => {
     if (connectedPrinter && connectedPrinter.isConnected) {
       const bytes = buildEscPosReceipt(sale);
@@ -364,7 +567,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
       if (success) return true;
     }
 
-    // Fallback to system print dialog
+    // Fallback to system print dialog only if not connected
     if (typeof window !== "undefined") {
       window.print();
       return true;
@@ -372,7 +575,47 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
     return false;
   };
 
-  // Print test page
+  // Print Barcode Stickers Directly to Connected Printer
+  const printBarcodeStickers = async (
+    stickers: PrintableBarcodeSticker[],
+    mode: PrinterProtocolMode = printerMode
+  ): Promise<boolean> => {
+    if (!connectedPrinter || !connectedPrinter.isConnected) {
+      setError("No printer connected. Please connect your USB or Bluetooth printer first.");
+      return false;
+    }
+
+    try {
+      setError(null);
+      for (const sticker of stickers) {
+        const qty = Math.max(1, sticker.quantity || 1);
+
+        if (mode === "tspl") {
+          // Native TSPL Label Printer Mode (TSC, Xprinter, TVS LP 46)
+          const tsplBytes = buildTsplBarcodeSticker(sticker);
+          const ok = await sendBytes(tsplBytes);
+          if (!ok) return false;
+        } else {
+          // ESC/POS Monochrome Raster Bitmap Mode (Works on all thermal/POS printers)
+          const rasterBytes = buildEscPosBarcodeSticker(sticker);
+          for (let q = 0; q < qty; q++) {
+            const ok = await sendBytes(rasterBytes);
+            if (!ok) return false;
+            if (qty > 1) {
+              await new Promise((r) => setTimeout(r, 60));
+            }
+          }
+        }
+      }
+      return true;
+    } catch (err: any) {
+      console.error("Barcode sticker print error:", err);
+      setError(`Barcode print failed: ${err.message || err}`);
+      return false;
+    }
+  };
+
+  // Print test receipt page
   const printTestPage = async (): Promise<boolean> => {
     const testDoc: PrintableSaleDoc = {
       billNumber: "TEST-001",
@@ -406,6 +649,21 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
     return printReceipt(testDoc);
   };
 
+  // Print test barcode sticker
+  const printTestSticker = async (): Promise<boolean> => {
+    const testSticker: PrintableBarcodeSticker = {
+      businessName: "SRI BALAJI SWEETS",
+      itemTitle: "KAJU KATLI 250G BOX",
+      unitLabel: "1 PC",
+      barcodeId: "7707",
+      batchCode: "1",
+      encodedBarcode: "7707*250*1",
+      mrp: 200,
+      quantity: 1,
+    };
+    return printBarcodeStickers([testSticker]);
+  };
+
   const printRawText = async (text: string): Promise<boolean> => {
     const encoder = new TextEncoder();
     const bytes = encoder.encode(text + "\n\n\n\x1d\x56\x41\x03");
@@ -418,12 +676,17 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
         connectedPrinter,
         isConnecting,
         error,
+        printerMode,
+        setPrinterMode,
         connectUSB,
         connectBluetooth,
         disconnectPrinter,
         printReceipt,
+        printBarcodeStickers,
         printTestPage,
+        printTestSticker,
         printRawText,
+        sendBytes,
       }}
     >
       {children}

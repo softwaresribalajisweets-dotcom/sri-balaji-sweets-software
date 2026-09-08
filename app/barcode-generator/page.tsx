@@ -25,8 +25,17 @@ import {
   ExternalLink,
   ChevronRight,
   Sparkles,
+  Usb,
+  Bluetooth,
+  AlertCircle,
+  CheckCircle2,
+  RefreshCw,
+  X,
+  Zap,
+  Store,
 } from "lucide-react";
 import Link from "next/link";
+import { usePrinter, PrintableBarcodeSticker } from "../../lib/printer";
 
 interface ItemProduct {
   id: string;
@@ -78,12 +87,24 @@ const PRESET_WEIGHTS = [
   { label: "800 GM", value: "800", unit: "GM", factor: 0.8 },
   { label: "1000 GM (1 KG)", value: "1000", unit: "GM", factor: 1.0 },
   { label: "1 PC", value: "1", unit: "PC", factor: 1.0 },
-  { label: "1 BOX", value: "1", unit: "BOX", factor: 1.0 },
+  { label: "1 BOX", value: "box", unit: "BOX", factor: 1.0 },
 ];
 
 const PRESET_PRINT_QUANTITIES = [1, 5, 10, 25, 50, 100, 200, 400, 800, 1000];
 
 export default function BarcodeGeneratorPage() {
+  const {
+    connectedPrinter,
+    isConnecting: isConnectingPrinter,
+    error: printerError,
+    printerMode,
+    setPrinterMode,
+    connectUSB,
+    connectBluetooth,
+    printBarcodeStickers,
+    printTestSticker,
+  } = usePrinter();
+
   const [items, setItems] = useState<ItemProduct[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [batches, setBatches] = useState<ItemBatch[]>([]);
@@ -116,6 +137,14 @@ export default function BarcodeGeneratorPage() {
   // Preview SVG Ref
   const previewSvgRef = useRef<SVGSVGElement | null>(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  // Direct Printer UI state
+  const [isPrintingDirect, setIsPrintingDirect] = useState(false);
+  const [printFeedback, setPrintFeedback] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+  const [showConnectModal, setShowConnectModal] = useState(false);
 
   // Subscribe to items from Firestore
   useEffect(() => {
@@ -199,54 +228,98 @@ export default function BarcodeGeneratorPage() {
     setSelectedItem(product);
     setBarcodeId(product.barcodeId || "7707");
 
-    // Automatically check for existing batches of this item
-    const itemBatches = batches.filter(
-      (b) => b.itemId === product.id || (product.barcodeId && b.itemBarcodeId === product.barcodeId)
+    // Auto-select latest active batch for this product
+    const prodBatches = batches.filter(
+      (b) =>
+        b.itemId === product.id ||
+        (product.barcodeId && b.itemBarcodeId === product.barcodeId)
     );
-    if (itemBatches.length > 0) {
-      setSelectedBatchId(itemBatches[0].id);
-      setCustomBatchNumber(String(itemBatches[0].batchCode));
+    if (prodBatches.length > 0) {
+      setSelectedBatchId(prodBatches[0].id);
     } else {
       setSelectedBatchId("");
       setCustomBatchNumber("1");
     }
 
-    const defaultPreset = PRESET_WEIGHTS[1]; // 250 GM
-    setSelectedPreset(defaultPreset.value);
-    setWeightAmount(defaultPreset.value);
-    setWeightUnit(defaultPreset.unit);
-
-    if (product.unit?.toLowerCase() === "piece") {
-      setItemTitle(`${product.name.toUpperCase()} (1 PC)`);
-      setUnitLabel("1 PC");
-      setWeightAmount("1");
-      setWeightUnit("PC");
-      setSelectedPreset("1");
-      setMrp(product.price);
-    } else {
-      setItemTitle(`${product.name.toUpperCase()} 250G BOX`);
-      setUnitLabel("1 PC");
-      setMrp(Math.round(product.price * defaultPreset.factor));
-    }
+    // Default weight preset 250g
+    applyPreset("250", product);
   };
 
-  // When a preset weight button is clicked
-  const handlePresetWeightClick = (preset: typeof PRESET_WEIGHTS[0]) => {
-    setSelectedPreset(preset.value);
-    setWeightAmount(preset.value);
-    setWeightUnit(preset.unit);
+  // Preset Selection Helper
+  const applyPreset = (presetVal: string, prod = selectedItem) => {
+    setSelectedPreset(presetVal);
 
-    const itemName = selectedItem ? selectedItem.name.toUpperCase() : "SWEET BOX";
-
-    if (preset.unit === "PC" || preset.unit === "BOX") {
-      setItemTitle(`${itemName} (${preset.label})`);
-      setUnitLabel(preset.label);
-      if (selectedItem) setMrp(selectedItem.price);
-    } else {
-      setItemTitle(`${itemName} ${preset.value}G BOX`);
+    if (presetVal === "100") {
+      setWeightAmount("100");
+      setWeightUnit("GM");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 100G BOX`);
       setUnitLabel("1 PC");
-      if (selectedItem) {
-        setMrp(Math.round(selectedItem.price * preset.factor));
+      if (prod) {
+        setMrp(Math.round(prod.price * 0.1));
+      }
+    } else if (presetVal === "250") {
+      setWeightAmount("250");
+      setWeightUnit("GM");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 250G BOX`);
+      setUnitLabel("1 PC");
+      if (prod) {
+        setMrp(Math.round(prod.price * 0.25));
+      }
+    } else if (presetVal === "400") {
+      setWeightAmount("400");
+      setWeightUnit("GM");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 400G BOX`);
+      setUnitLabel("1 PC");
+      if (prod) {
+        setMrp(Math.round(prod.price * 0.4));
+      }
+    } else if (presetVal === "500") {
+      setWeightAmount("500");
+      setWeightUnit("GM");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 500G BOX`);
+      setUnitLabel("1 PC");
+      if (prod) {
+        setMrp(Math.round(prod.price * 0.5));
+      }
+    } else if (presetVal === "800") {
+      setWeightAmount("800");
+      setWeightUnit("GM");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 800G BOX`);
+      setUnitLabel("1 PC");
+      if (prod) {
+        setMrp(Math.round(prod.price * 0.8));
+      }
+    } else if (presetVal === "1000") {
+      setWeightAmount("1000");
+      setWeightUnit("GM");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 1 KG BOX`);
+      setUnitLabel("1 PC");
+      if (prod) {
+        setMrp(Math.round(prod.price * 1.0));
+      }
+    } else if (presetVal === "1") {
+      setWeightAmount("1");
+      setWeightUnit("PC");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 1 PC`);
+      setUnitLabel("1 PC");
+      if (prod) {
+        setMrp(Math.round(prod.price));
+      }
+    } else if (presetVal === "box") {
+      setWeightAmount("1");
+      setWeightUnit("BOX");
+      const name = prod ? prod.name.toUpperCase() : "SWEET";
+      setItemTitle(`${name} 1 BOX`);
+      setUnitLabel("1 BOX");
+      if (prod) {
+        setMrp(Math.round(prod.price));
       }
     }
   };
@@ -309,9 +382,100 @@ export default function BarcodeGeneratorPage() {
       item.category?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Trigger browser print
-  const handlePrint = () => {
+  // Direct 1-Click Print to Connected USB or Bluetooth Thermal / Barcode Printer
+  const handlePrintDirect = async () => {
+    if (!connectedPrinter?.isConnected) {
+      setShowConnectModal(true);
+      return;
+    }
+
+    setIsPrintingDirect(true);
+    setPrintFeedback({
+      type: "info",
+      message: `Sending print commands directly to ${connectedPrinter.name}...`,
+    });
+
+    try {
+      const stickersToPrint: PrintableBarcodeSticker[] =
+        activeTab === "single"
+          ? [
+              {
+                businessName,
+                itemTitle,
+                unitLabel,
+                barcodeId,
+                batchCode: activeBatchNumber,
+                encodedBarcode,
+                mrp: Number(mrp) || 0,
+                quantity: Number(printQuantity) || 1,
+              },
+            ]
+          : batchQueue.map((item) => ({
+              businessName: item.businessName,
+              itemTitle: item.itemTitle,
+              unitLabel: item.unitLabel,
+              barcodeId: item.barcodeId,
+              batchCode: item.batchCode,
+              encodedBarcode: item.encodedBarcode,
+              mrp: item.mrp,
+              quantity: item.printQuantity,
+            }));
+
+      const totalCount = stickersToPrint.reduce((acc, s) => acc + (s.quantity || 1), 0);
+      const ok = await printBarcodeStickers(stickersToPrint);
+
+      if (ok) {
+        setPrintFeedback({
+          type: "success",
+          message: `Successfully printed ${totalCount} stickers directly to ${connectedPrinter.name}!`,
+        });
+        setTimeout(() => setPrintFeedback(null), 4500);
+      } else {
+        setPrintFeedback({
+          type: "error",
+          message: printerError || "Printing failed. Please check printer connection & label feed.",
+        });
+      }
+    } catch (e: any) {
+      setPrintFeedback({
+        type: "error",
+        message: e.message || "Failed to transmit print data.",
+      });
+    } finally {
+      setIsPrintingDirect(false);
+    }
+  };
+
+  // Fallback to System Browser Print Dialog (if user specifically wants A4 / PDF modal)
+  const handleSystemPrint = () => {
     window.print();
+  };
+
+  // Test Sticker Print
+  const handleTestSticker = async () => {
+    if (!connectedPrinter?.isConnected) {
+      setShowConnectModal(true);
+      return;
+    }
+    setIsPrintingDirect(true);
+    setPrintFeedback({
+      type: "info",
+      message: "Transmitting test sticker to printer...",
+    });
+    const ok = await printTestSticker();
+    setIsPrintingDirect(false);
+    if (ok) {
+      setPrintFeedback({
+        type: "success",
+        message: `Test sticker printed successfully on ${connectedPrinter.name}!`,
+      });
+      setTimeout(() => setPrintFeedback(null), 4000);
+    } else {
+      setPrintFeedback({
+        type: "error",
+        message: printerError || "Test sticker print failed.",
+      });
+    }
   };
 
   // Download sticker as high-res PNG (with Left Logo space)
@@ -446,16 +610,163 @@ export default function BarcodeGeneratorPage() {
               <span>{downloadSuccess ? "Downloaded!" : "Download PNG"}</span>
             </button>
 
+            {/* Fallback Browser Print Dialog Button */}
             <button
               type="button"
-              onClick={handlePrint}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer"
+              onClick={handleSystemPrint}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-700 text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+              title="Open standard browser print preview modal"
             >
-              <Printer className="w-3.5 h-3.5 text-white" />
-              <span>Print Stickers ({activeTab === "single" ? printQuantity : totalBatchStickers})</span>
+              <Printer className="w-3.5 h-3.5 text-neutral-500" />
+              <span>System Print (Modal)</span>
+            </button>
+
+            {/* Primary Direct Print Button */}
+            <button
+              type="button"
+              onClick={handlePrintDirect}
+              disabled={isPrintingDirect}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer ${
+                connectedPrinter?.isConnected
+                  ? "bg-emerald-600 hover:bg-emerald-700 active:scale-98"
+                  : "bg-neutral-900 hover:bg-neutral-800"
+              }`}
+            >
+              {isPrintingDirect ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : connectedPrinter?.isConnected ? (
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+              ) : (
+                <Printer className="w-3.5 h-3.5 text-white" />
+              )}
+              <span>
+                {isPrintingDirect
+                  ? "Printing..."
+                  : connectedPrinter?.isConnected
+                  ? `Print Direct (${activeTab === "single" ? printQuantity : totalBatchStickers} Stickers)`
+                  : `Connect & Print Direct (${activeTab === "single" ? printQuantity : totalBatchStickers})`}
+              </span>
             </button>
           </div>
         </div>
+
+        {/* Printer Status Banner */}
+        <div
+          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+            connectedPrinter?.isConnected
+              ? "bg-emerald-50/80 border-emerald-200 text-emerald-950 shadow-2xs"
+              : "bg-amber-50/80 border-amber-200 text-amber-950 shadow-2xs"
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <div
+              className={`w-3 h-3 rounded-full shrink-0 ${
+                connectedPrinter?.isConnected
+                  ? "bg-emerald-500 ring-4 ring-emerald-100 animate-pulse"
+                  : "bg-amber-500 ring-4 ring-amber-100"
+              }`}
+            ></div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold">
+                  {connectedPrinter?.isConnected
+                    ? `Connected Printer: ${connectedPrinter.name} (${connectedPrinter.type.toUpperCase()})`
+                    : "No Thermal / Barcode Printer Connected (Direct 1-Click Print Disabled)"}
+                </span>
+                {connectedPrinter?.isConnected && (
+                  <span className="px-1.5 py-0.2 rounded bg-emerald-200/60 text-emerald-800 text-[10px] font-mono font-bold">
+                    Mode: {printerMode.toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] opacity-80 mt-0.5">
+                {connectedPrinter?.isConnected
+                  ? "Clicking 'Print Direct' sends sticker labels instantly to your printer without any browser print popup dialogs."
+                  : "Connect via USB cable or Bluetooth to print stickers instantly with 1-click silent printing."}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {connectedPrinter?.isConnected ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleTestSticker}
+                  disabled={isPrintingDirect}
+                  className="px-2.5 py-1 bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-900 rounded-lg font-bold text-[11px] cursor-pointer shadow-2xs"
+                >
+                  Test 1 Sticker
+                </button>
+                <div className="flex items-center bg-white border border-emerald-300 rounded-lg p-0.5 text-[10px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setPrinterMode("auto")}
+                    className={`px-1.5 py-0.5 rounded cursor-pointer ${
+                      printerMode === "auto" ? "bg-emerald-600 text-white" : "text-neutral-700"
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrinterMode("escpos")}
+                    className={`px-1.5 py-0.5 rounded cursor-pointer ${
+                      printerMode === "escpos" ? "bg-emerald-600 text-white" : "text-neutral-700"
+                    }`}
+                  >
+                    ESC/POS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrinterMode("tspl")}
+                    className={`px-1.5 py-0.5 rounded cursor-pointer ${
+                      printerMode === "tspl" ? "bg-emerald-600 text-white" : "text-neutral-700"
+                    }`}
+                  >
+                    TSPL
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowConnectModal(true)}
+                className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Zap className="w-3 h-3 text-amber-400" />
+                <span>Connect Printer Now</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Feedback Alert Toast */}
+        {printFeedback && (
+          <div
+            className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 font-semibold ${
+              printFeedback.type === "success"
+                ? "bg-emerald-100 border-emerald-300 text-emerald-900"
+                : printFeedback.type === "error"
+                ? "bg-red-100 border-red-300 text-red-900"
+                : "bg-blue-100 border-blue-300 text-blue-900"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {printFeedback.type === "success" && <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />}
+              {printFeedback.type === "error" && <AlertCircle className="w-4 h-4 text-red-700 shrink-0" />}
+              {printFeedback.type === "info" && <RefreshCw className="w-4 h-4 text-blue-700 shrink-0 animate-spin" />}
+              <span>{printFeedback.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPrintFeedback(null)}
+              className="p-1 text-neutral-500 hover:text-neutral-900 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Tab Navigation (Single Sticker vs Batch Queue) */}
         <div className="flex items-center gap-2 border-b border-neutral-200 pb-2">
@@ -518,38 +829,66 @@ export default function BarcodeGeneratorPage() {
                 />
               </div>
 
-              {/* Quick Select Product List */}
-              <div className="max-h-40 overflow-y-auto divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-neutral-50/50">
+              {/* Products List Carousel / Grid */}
+              <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
                 {loadingItems ? (
-                  <div className="p-4 text-center text-xs text-neutral-400">Loading catalog items...</div>
+                  <div className="p-4 text-center text-xs text-neutral-400">
+                    Loading products...
+                  </div>
                 ) : filteredProducts.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-neutral-400">No matching products found.</div>
+                  <div className="p-4 text-center text-xs text-neutral-500">
+                    No products matching &ldquo;{searchQuery}&rdquo;
+                  </div>
                 ) : (
-                  filteredProducts.slice(0, 15).map((p) => {
-                    const isSelected = selectedItem?.id === p.id;
+                  filteredProducts.map((prod) => {
+                    const isSelected = selectedItem?.id === prod.id;
                     return (
                       <button
-                        key={p.id}
+                        key={prod.id}
                         type="button"
-                        onClick={() => handleSelectProduct(p)}
-                        className={`w-full text-left px-3 py-2 flex items-center justify-between text-xs transition-colors cursor-pointer ${
-                          isSelected ? "bg-neutral-900 text-white" : "hover:bg-neutral-100 text-neutral-800"
+                        onClick={() => handleSelectProduct(prod)}
+                        className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all cursor-pointer border ${
+                          isSelected
+                            ? "bg-neutral-900 text-white border-neutral-900 shadow-xs"
+                            : "bg-white hover:bg-neutral-50 text-neutral-800 border-neutral-200"
                         }`}
                       >
-                        <div className="flex items-center gap-2 truncate">
-                          <span className="font-bold truncate">{p.name}</span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-xs shrink-0 ${
                               isSelected
-                                ? "bg-neutral-800 text-neutral-200"
-                                : "bg-neutral-200 text-neutral-700"
+                                ? "bg-amber-500 text-neutral-900"
+                                : "bg-neutral-100 text-neutral-700"
                             }`}
                           >
-                            #{p.barcodeId}
-                          </span>
+                            {prod.name.charAt(0)}
+                          </div>
+                          <div className="truncate">
+                            <div className="font-bold text-xs truncate">
+                              {prod.name}
+                            </div>
+                            <div
+                              className={`text-[10px] ${
+                                isSelected ? "text-neutral-300" : "text-neutral-500"
+                              }`}
+                            >
+                              Barcode ID: <strong className="font-mono">{prod.barcodeId || "N/A"}</strong> • Cat: {prod.category || "General"}
+                            </div>
+                          </div>
                         </div>
-                        <div className="font-mono font-bold shrink-0 ml-2">
-                          ₹{p.price} / {p.unit || "KG"}
+
+                        <div className="text-right shrink-0 pl-2">
+                          <div className="font-bold text-xs">
+                            ₹{prod.price}
+                            <span className="text-[10px] font-normal opacity-80">
+                              /{prod.unit || "kg"}
+                            </span>
+                          </div>
+                          {isSelected && (
+                            <span className="text-[10px] font-bold text-amber-400 flex items-center justify-end gap-0.5">
+                              <Check className="w-3 h-3" /> Selected
+                            </span>
+                          )}
                         </div>
                       </button>
                     );
@@ -558,445 +897,305 @@ export default function BarcodeGeneratorPage() {
               </div>
             </div>
 
-            {/* Step 2: Select Active Batch of That Item */}
+            {/* Step 2: Select Manufacturing Batch */}
             <div className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Boxes className="w-3.5 h-3.5 text-neutral-700" />
-                  Step 2: Active Batches of Selected Item
+                  Step 2: Select Production Batch
                 </span>
-                {selectedItem && (
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200 font-bold">
-                    Batch #{activeBatchNumber}
-                  </span>
-                )}
+                <span className="text-[11px] text-neutral-500">
+                  {activeBatchesForItem.length} active batches for {selectedItem?.name || "item"}
+                </span>
               </div>
 
               {activeBatchesForItem.length > 0 ? (
-                <div className="space-y-2">
-                  <label className="block text-[11px] font-semibold text-neutral-500">
-                    Choose from active created batches for {selectedItem?.name}:
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {activeBatchesForItem.slice(0, 6).map((b) => {
-                      const isSelected = selectedBatchId === b.id;
-                      return (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedBatchId(b.id);
-                            setCustomBatchNumber(String(b.batchCode));
-                          }}
-                          className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                            isSelected
-                              ? "bg-purple-50/80 border-purple-400 shadow-xs ring-1 ring-purple-300"
-                              : "bg-white hover:bg-neutral-50 border-neutral-200"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="font-mono font-bold text-xs text-neutral-900">
-                              {b.batchCodeString || `Batch #${b.batchCode}`}
-                            </span>
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-semibold font-mono">
-                              Avail: {b.unallocatedQuantity ?? b.manufacturedQuantity} {selectedItem?.unit || "KG"}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-neutral-500 flex items-center gap-2">
-                            <span>Mfg: {b.manufacturingDate || "N/A"}</span>
-                            <span>•</span>
-                            <span>Exp: {b.expiryDate || "N/A"}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {activeBatchesForItem.map((b) => {
+                    const isSelected = selectedBatchId === b.id;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setSelectedBatchId(b.id)}
+                        className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? "bg-neutral-900 text-white border-neutral-900 shadow-xs"
+                            : "bg-white hover:bg-neutral-50 text-neutral-800 border-neutral-200"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold font-mono text-xs text-amber-400">
+                            Batch #{b.batchCode}
+                          </span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                              isSelected
+                                ? "bg-neutral-800 text-neutral-200"
+                                : "bg-neutral-100 text-neutral-600"
+                            }`}
+                          >
+                            Qty: {b.manufacturedQuantity}
+                          </span>
+                        </div>
+
+                        <div className="text-[10px] mt-1.5 opacity-80 flex items-center justify-between">
+                          <span>Mfg: {b.manufacturingDate || "Today"}</span>
+                          {b.expiryDate && <span>Exp: {b.expiryDate}</span>}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <span className="font-bold block">No batches created for this item yet.</span>
-                    <span className="text-[11px] text-amber-700">
-                      Using default batch #1 or enter a custom batch number below.
-                    </span>
+                <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-lg text-amber-900 text-xs flex items-center justify-between">
+                  <span>No active manufacturing batch found in inventory.</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold">Custom Batch #:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={customBatchNumber}
+                      onChange={(e) => {
+                        setCustomBatchNumber(e.target.value);
+                        setSelectedBatchId("");
+                      }}
+                      className="w-14 bg-white border border-amber-300 rounded px-1.5 py-0.5 text-center font-bold text-xs"
+                    />
                   </div>
-                  <Link
-                    href="/batches"
-                    target="_blank"
-                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-800 hover:bg-amber-900 text-white rounded-lg text-xs font-bold cursor-pointer shrink-0"
-                  >
-                    <span>Create Batch</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </Link>
                 </div>
               )}
-
-              {/* Custom / Manual Batch Code Input Override */}
-              <div className="pt-2 border-t border-neutral-100 flex items-center gap-3">
-                <label className="text-[11px] font-bold text-neutral-700 shrink-0">
-                  Batch Number:
-                </label>
-                <div className="relative flex-1 max-w-[160px]">
-                  <input
-                    type="text"
-                    value={customBatchNumber}
-                    onChange={(e) => {
-                      setCustomBatchNumber(e.target.value);
-                      setSelectedBatchId(""); // Deselect specific batch if manually customized
-                    }}
-                    placeholder="e.g. 1, 2, 3..."
-                    className="w-full bg-white text-xs font-bold font-mono text-neutral-900 py-1.5 px-2.5 rounded-lg border border-neutral-300 focus:outline-none focus:border-neutral-900"
-                  />
-                </div>
-                <span className="text-[10px] text-neutral-400">
-                  Encoded as 3rd part in barcode payload
-                </span>
-              </div>
             </div>
 
-            {/* Step 3: Weight / Pack Size */}
-            <div className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs space-y-4">
+            {/* Step 3: Weight & Packaging Configuration */}
+            <div className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sliders className="w-3.5 h-3.5 text-neutral-700" />
-                  Step 3: Weight & Pack Size
+                  <Scale className="w-3.5 h-3.5 text-neutral-700" />
+                  Step 3: Weight / Package Preset
                 </span>
-                <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
-                  Weight: {weightAmount} {weightUnit}
+                <span className="text-[11px] text-neutral-500">
+                  Calculates MRP & sets encoded weight
                 </span>
               </div>
 
               {/* Weight Presets Chips */}
-              <div>
-                <label className="block text-[11px] font-semibold text-neutral-500 mb-1.5">
-                  Quick Weight Presets:
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {PRESET_WEIGHTS.map((preset) => (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {PRESET_WEIGHTS.map((pw) => {
+                  const isSelected = selectedPreset === pw.value;
+                  return (
                     <button
-                      key={preset.label}
+                      key={pw.value}
                       type="button"
-                      onClick={() => handlePresetWeightClick(preset)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        selectedPreset === preset.value && weightUnit === preset.unit
-                          ? "bg-neutral-900 text-white shadow-xs"
-                          : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
+                      onClick={() => applyPreset(pw.value)}
+                      className={`p-2 rounded-lg border text-center transition-all cursor-pointer font-bold text-xs ${
+                        isSelected
+                          ? "bg-neutral-900 text-white border-neutral-900 shadow-xs"
+                          : "bg-white hover:bg-neutral-50 text-neutral-800 border-neutral-200"
                       }`}
                     >
-                      {preset.label}
+                      {pw.label}
                     </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPreset("custom")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      selectedPreset === "custom"
-                        ? "bg-amber-600 text-white shadow-xs"
-                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
-                    }`}
-                  >
-                    Custom Weight
-                  </button>
-                </div>
+                  );
+                })}
               </div>
 
-              {/* Custom Weight Amount & Unit Input Bar */}
-              <div className="p-3 bg-amber-50/50 rounded-xl border border-amber-200/80 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-neutral-800 flex items-center gap-1">
-                    <Scale className="w-3.5 h-3.5 text-amber-700" />
-                    Enter Exact Weight:
+              {/* Custom Weight / Piece Input */}
+              <div className="grid grid-cols-2 gap-3 pt-1 border-t border-neutral-100">
+                <div>
+                  <label className="block text-[11px] font-bold text-neutral-700 mb-1">
+                    Custom Weight / Value
                   </label>
-                  <span className="text-[10px] font-mono text-neutral-500">
-                    Auto pro-rates price & encodes into barcode
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-2">
+                  <div className="flex rounded-lg shadow-2xs">
                     <input
                       type="number"
-                      min={0.1}
-                      step="any"
-                      placeholder="e.g. 250, 500, 1000..."
                       value={weightAmount}
                       onChange={(e) => handleCustomWeightChange(e.target.value, weightUnit)}
-                      className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2 rounded-lg border border-amber-300 focus:outline-none focus:border-amber-600 shadow-2xs"
+                      className="w-full bg-neutral-50 text-xs pl-2.5 pr-1 py-1.5 rounded-l-lg border border-neutral-300 focus:outline-none focus:bg-white"
+                      placeholder="e.g. 350"
                     />
-                  </div>
-
-                  <div>
                     <select
                       value={weightUnit}
                       onChange={(e) => handleCustomWeightChange(weightAmount, e.target.value)}
-                      className="w-full bg-white text-xs font-bold text-neutral-800 p-2 rounded-lg border border-amber-300 focus:outline-none cursor-pointer"
+                      className="bg-neutral-100 text-xs px-2 py-1.5 rounded-r-lg border border-l-0 border-neutral-300 font-bold text-neutral-700"
                     >
-                      <option value="GM">Grams (GM)</option>
-                      <option value="KG">Kilograms (KG)</option>
-                      <option value="PC">Piece (PC)</option>
-                      <option value="BOX">Box</option>
-                      <option value="LTR">Litre (LTR)</option>
+                      <option value="GM">GM</option>
+                      <option value="KG">KG</option>
+                      <option value="PC">PC</option>
+                      <option value="BOX">BOX</option>
                     </select>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-neutral-700 mb-1">
+                    MRP / Sticker Price (₹)
+                  </label>
+                  <input
+                    type="number"
+                    value={mrp}
+                    onChange={(e) => setMrp(e.target.value === "" ? "" : Number(e.target.value))}
+                    className="w-full bg-neutral-50 text-xs px-2.5 py-1.5 rounded-lg border border-neutral-300 focus:outline-none focus:bg-white font-bold text-neutral-900 shadow-2xs"
+                    placeholder="MRP ₹"
+                  />
                 </div>
               </div>
             </div>
 
-            {/* Step 4: Print Quantity */}
+            {/* Step 4: Print Quantity Configuration */}
             <div className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Printer className="w-3.5 h-3.5 text-neutral-700" />
-                  Step 4: Print Quantity
+                  Step 4: Print Quantity (Copies)
                 </span>
-                <span className="text-xs font-bold font-mono text-neutral-900">
+                <span className="text-[11px] font-mono font-bold text-neutral-900">
                   {printQuantity} Stickers
                 </span>
               </div>
 
-              {/* Presets */}
-              <div className="flex flex-wrap gap-1.5">
-                {PRESET_PRINT_QUANTITIES.map((qty) => (
+              {/* Quantity Preset Buttons */}
+              <div className="grid grid-cols-5 gap-1.5">
+                {PRESET_PRINT_QUANTITIES.map((q) => (
                   <button
-                    key={qty}
+                    key={q}
                     type="button"
-                    onClick={() => setPrintQuantity(qty)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition-all cursor-pointer ${
-                      printQuantity === qty
-                        ? "bg-neutral-900 text-white shadow-xs"
-                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
+                    onClick={() => setPrintQuantity(q)}
+                    className={`py-1.5 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                      printQuantity === q
+                        ? "bg-neutral-900 text-white border-neutral-900 shadow-xs"
+                        : "bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-200"
                     }`}
                   >
-                    {qty}
+                    {q}
                   </button>
                 ))}
               </div>
 
-              <div className="flex items-center gap-3 pt-2">
-                <div className="flex-1">
-                  <input
-                    type="number"
-                    min={1}
-                    max={5000}
-                    value={printQuantity}
-                    onChange={(e) => setPrintQuantity(Math.max(1, Number(e.target.value) || 1))}
-                    className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none"
-                    placeholder="Custom Quantity (e.g. 50, 100, 400)"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleAddToBatch}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add to Batch Queue</span>
-                </button>
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-xs text-neutral-500 font-medium">Custom Quantity:</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="5000"
+                  value={printQuantity}
+                  onChange={(e) => setPrintQuantity(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-24 bg-neutral-50 border border-neutral-300 rounded-lg px-2.5 py-1 text-xs font-bold text-neutral-900 focus:outline-none focus:bg-white"
+                />
+                <span className="text-[11px] text-neutral-400">stickers (will print dual columns)</span>
               </div>
             </div>
-
-            {/* Step 5: Fine-Tune Label Text & MRP (Optional Details) */}
-            <details className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs space-y-3">
-              <summary className="text-xs font-bold text-neutral-700 uppercase tracking-wider cursor-pointer hover:text-neutral-900 select-none">
-                + Optional Label Customization (Business Name, Text & MRP)
-              </summary>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
-                {/* Business Name */}
-                <div>
-                  <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-                    Business Name Header
-                  </label>
-                  <input
-                    type="text"
-                    value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
-                    className="w-full bg-white text-xs font-bold text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none"
-                  />
-                </div>
-
-                {/* Item / Pack Title (Left Label) */}
-                <div>
-                  <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-                    Sticker Item Text
-                  </label>
-                  <input
-                    type="text"
-                    value={itemTitle}
-                    onChange={(e) => setItemTitle(e.target.value)}
-                    className="w-full bg-white text-xs font-bold text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none uppercase"
-                  />
-                </div>
-
-                {/* Unit / Pack (Right Label) */}
-                <div>
-                  <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-                    Pack Unit
-                  </label>
-                  <input
-                    type="text"
-                    value={unitLabel}
-                    onChange={(e) => setUnitLabel(e.target.value)}
-                    className="w-full bg-white text-xs font-bold text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none uppercase"
-                  />
-                </div>
-
-                {/* Selling Price / MRP */}
-                <div>
-                  <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-                    MRP (₹)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={mrp}
-                    onChange={(e) => setMrp(e.target.value === "" ? "" : Number(e.target.value))}
-                    className="w-full bg-white text-xs font-bold font-mono text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none"
-                  />
-                </div>
-              </div>
-            </details>
           </div>
 
           {/* ==================== RIGHT COLUMN: LIVE STICKER PREVIEW & ACTIONS (5 Cols) ==================== */}
-          <div className="lg:col-span-5 space-y-4">
-            <div className="bg-white border border-neutral-200/90 rounded-xl p-5 shadow-2xs space-y-4 sticky top-20">
+          <div className="lg:col-span-5 space-y-4 sticky top-20">
+            <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   <Eye className="w-4 h-4 text-neutral-700" />
-                  2-Column Printer Row Preview
-                </span>
-                <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 uppercase font-bold">
-                  2 Stickers / Row (50mm × 30mm each)
+                  <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                    Actual Sticker Label Preview
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono bg-neutral-100 text-neutral-600 px-2 py-0.5 rounded font-bold">
+                  50mm × 30mm
                 </span>
               </div>
 
-              {/* 2-Columns Dual Sticker Row Preview Container */}
-              <div className="p-3 bg-neutral-100/80 rounded-xl border border-dashed border-neutral-300 space-y-2">
-                <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider text-center">
-                  Thermal Roll Preview (Left & Right Column)
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 justify-center">
-                  {/* Column 1 Sticker */}
-                  <div
-                    className="bg-white text-black p-2 rounded-md border border-neutral-400 shadow-sm flex flex-row items-stretch select-none"
-                    style={{
-                      height: "125px",
-                      fontFamily: "Arial, Helvetica, sans-serif",
-                    }}
-                  >
-                    {/* Left Side: Empty Space for Pre-printed Logo */}
-                    <div className="w-12 border-r border-dashed border-neutral-300 pr-1 flex flex-col items-center justify-center shrink-0 bg-neutral-50/50 rounded-l">
-                      <span className="text-[7px] font-bold text-neutral-400 -rotate-90 uppercase tracking-wider">
-                        Logo Space
-                      </span>
+              {/* Exact Physical Sticker Rendering Preview (50mm x 30mm Proportions) */}
+              <div className="flex justify-center p-3 bg-neutral-100/70 rounded-xl border border-dashed border-neutral-300">
+                <div className="w-[330px] h-[198px] bg-white border border-neutral-900 rounded shadow-md p-2 flex flex-row gap-2 relative overflow-hidden text-neutral-900">
+                  {/* Left Column: Reserved Space for Pre-printed Store Logo */}
+                  <div className="w-14 shrink-0 border-r border-dashed border-neutral-300 flex flex-col items-center justify-center p-1 text-center bg-neutral-50/50 rounded">
+                    <div className="w-8 h-8 rounded-full bg-neutral-200 flex items-center justify-center mb-1">
+                      <Store className="w-4 h-4 text-neutral-500" />
                     </div>
-
-                    {/* Right Side: Sticker Content */}
-                    <div className="flex-1 pl-2 flex flex-col justify-between overflow-hidden min-w-0">
-                      <div className="text-center font-black text-[10px] tracking-tight text-black uppercase truncate">
-                        {businessName || "SRI BALAJI SWEETS"}
-                      </div>
-                      <div className="flex items-center justify-between text-[8px] font-black tracking-tight text-black uppercase">
-                        <span className="truncate pr-0.5">{itemTitle || "250 GRAMS BOX"}</span>
-                        <span className="shrink-0">{unitLabel || "1 PC"}</span>
-                      </div>
-                      <div className="my-0.5 flex justify-center items-center overflow-hidden h-7">
-                        <svg
-                          ref={previewSvgRef}
-                          className="w-full h-full"
-                          style={{ shapeRendering: "crispEdges" }}
-                        ></svg>
-                      </div>
-                      <div className="flex items-center justify-between text-[8px] font-bold">
-                        <div className="flex items-center gap-1 font-mono text-[7px]">
-                          <span>#{barcodeId || "7707"}</span>
-                          <span>•</span>
-                          <span>B#{activeBatchNumber}</span>
-                        </div>
-                        <span className="font-black text-[9px]">
-                          MRP: {mrp}/-
-                        </span>
-                      </div>
-                    </div>
+                    <span className="text-[7.5px] font-bold text-neutral-400 leading-tight">
+                      PRE-PRINTED LOGO
+                    </span>
                   </div>
 
-                  {/* Column 2 Sticker (Adjacent Label) */}
-                  <div
-                    className="bg-white text-black p-2 rounded-md border border-neutral-400 shadow-sm flex flex-row items-stretch select-none"
-                    style={{
-                      height: "125px",
-                      fontFamily: "Arial, Helvetica, sans-serif",
-                    }}
-                  >
-                    {/* Left Side: Empty Space for Pre-printed Logo */}
-                    <div className="w-12 border-r border-dashed border-neutral-300 pr-1 flex flex-col items-center justify-center shrink-0 bg-neutral-50/50 rounded-l">
-                      <span className="text-[7px] font-bold text-neutral-400 -rotate-90 uppercase tracking-wider">
-                        Logo Space
-                      </span>
+                  {/* Right Column: Dynamic Data (Header, Item, Barcode, Batch, MRP) */}
+                  <div className="flex-1 flex flex-col justify-between overflow-hidden min-w-0">
+                    {/* Top: Business Name */}
+                    <div className="text-center font-black text-[12px] tracking-tight truncate border-b border-neutral-100 pb-0.5">
+                      {businessName}
                     </div>
 
-                    {/* Right Side: Sticker Content */}
-                    <div className="flex-1 pl-2 flex flex-col justify-between overflow-hidden min-w-0">
-                      <div className="text-center font-black text-[10px] tracking-tight text-black uppercase truncate">
-                        {businessName || "SRI BALAJI SWEETS"}
+                    {/* Subtitle: Product Name & Unit */}
+                    <div className="flex items-center justify-between text-[9px] font-black uppercase pt-0.5">
+                      <span className="truncate max-w-[70%]">{itemTitle}</span>
+                      <span className="shrink-0">{unitLabel}</span>
+                    </div>
+
+                    {/* Barcode Graphic */}
+                    <div className="my-0.5 flex justify-center items-center overflow-hidden h-10">
+                      <svg ref={previewSvgRef} className="w-full h-full max-h-10"></svg>
+                    </div>
+
+                    {/* Bottom Line: ID • Batch# and MRP */}
+                    <div className="flex items-center justify-between text-[9px] font-black pt-0.5 border-t border-neutral-100">
+                      <div className="flex items-center gap-1 font-mono text-[8.5px]">
+                        <span>#{barcodeId || "7707"}</span>
+                        <span>•</span>
+                        <span>B#{activeBatchNumber}</span>
                       </div>
-                      <div className="flex items-center justify-between text-[8px] font-black tracking-tight text-black uppercase">
-                        <span className="truncate pr-0.5">{itemTitle || "250 GRAMS BOX"}</span>
-                        <span className="shrink-0">{unitLabel || "1 PC"}</span>
-                      </div>
-                      <div className="my-0.5 flex justify-center items-center overflow-hidden h-7">
-                        <div className="font-mono text-[8px] text-neutral-400 text-center tracking-widest">
-                          ||||||||||||||||||||||||||
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between text-[8px] font-bold">
-                        <div className="flex items-center gap-1 font-mono text-[7px]">
-                          <span>#{barcodeId || "7707"}</span>
-                          <span>•</span>
-                          <span>B#{activeBatchNumber}</span>
-                        </div>
-                        <span className="font-black text-[9px]">
-                          MRP: {mrp}/-
-                        </span>
-                      </div>
+                      <span className="font-black text-[10px]">
+                        MRP: ₹{mrp}/-
+                      </span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Scan Info Badge (Scanner Reads: itembarcodeid*weight*batchnumber) */}
+              {/* Hardware Scanner Payload Info Box */}
               <div className="p-3 rounded-xl bg-neutral-900 text-white space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <ScanLine className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="text-neutral-300 text-[11px] font-medium">Hardware Scanner Reads:</span>
+                    <span className="text-neutral-300 text-[11px] font-medium">POS Scanner Protocol:</span>
                   </div>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
-                    barcode*weight*batch
+                    item*weight*batch
                   </span>
                 </div>
-                <div className="font-mono font-bold text-amber-300 text-sm tracking-wider p-2 bg-neutral-800 rounded-lg border border-neutral-700 text-center truncate">
+                <div className="font-mono font-bold text-amber-300 text-sm tracking-wider p-2 bg-neutral-800 rounded-lg border border-neutral-700 text-center truncate select-all">
                   {encodedBarcode}
                 </div>
                 <div className="flex items-center justify-between text-[10px] text-neutral-400 pt-0.5">
-                  <span>Item ID: <strong className="text-white font-mono">{barcodeId}</strong></span>
+                  <span>ID: <strong className="text-white font-mono">{barcodeId}</strong></span>
                   <span>Weight: <strong className="text-white font-mono">{weightAmount}{weightUnit}</strong></span>
                   <span>Batch: <strong className="text-white font-mono">#{activeBatchNumber}</strong></span>
                 </div>
               </div>
 
-              {/* Primary Action Button: Print Now */}
+              {/* Primary Action Buttons */}
               <div className="space-y-2 pt-1">
+                {/* 1-Click Direct Print Button */}
                 <button
                   type="button"
-                  onClick={handlePrint}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
+                  onClick={handlePrintDirect}
+                  disabled={isPrintingDirect}
+                  className={`w-full flex items-center justify-center gap-2 py-3 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer ${
+                    connectedPrinter?.isConnected
+                      ? "bg-emerald-600 hover:bg-emerald-700 active:scale-98"
+                      : "bg-neutral-900 hover:bg-neutral-800"
+                  }`}
                 >
-                  <Printer className="w-4 h-4" />
-                  <span>Print {activeTab === "single" ? printQuantity : totalBatchStickers} Stickers (2-Col Printer)</span>
+                  {isPrintingDirect ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                  ) : connectedPrinter?.isConnected ? (
+                    <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse"></span>
+                  ) : (
+                    <Printer className="w-4 h-4 text-white" />
+                  )}
+                  <span>
+                    {isPrintingDirect
+                      ? "Transmitting Print Data..."
+                      : connectedPrinter?.isConnected
+                      ? `Print ${activeTab === "single" ? printQuantity : totalBatchStickers} Stickers to ${connectedPrinter.name}`
+                      : `Connect & Print Direct (${activeTab === "single" ? printQuantity : totalBatchStickers} Stickers)`}
+                  </span>
                 </button>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -1022,7 +1221,7 @@ export default function BarcodeGeneratorPage() {
 
               {/* Batch Queue Preview Box if items exist */}
               {batchQueue.length > 0 && (
-                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2 mt-4">
+                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2 mt-2">
                   <div className="flex items-center justify-between text-xs font-bold text-neutral-800">
                     <span>Batch Queue ({batchQueue.length} items • {totalBatchStickers} labels)</span>
                     <button
@@ -1070,6 +1269,101 @@ export default function BarcodeGeneratorPage() {
           </div>
         </div>
       </div>
+
+      {/* ============================================================== */}
+      {/* QUICK PRINTER CONNECT POPUP MODAL                             */}
+      {/* ============================================================== */}
+      {showConnectModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden text-neutral-900">
+            <div className="flex items-center justify-between p-4 px-6 border-b border-neutral-100 bg-neutral-50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-neutral-900 text-white">
+                  <Printer className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900">
+                    Connect Label / Barcode Printer
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Select connection for 1-click silent direct printing
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConnectModal(false)}
+                className="text-neutral-400 hover:text-neutral-800 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await connectUSB();
+                    if (ok) setShowConnectModal(false);
+                  }}
+                  disabled={isConnectingPrinter}
+                  className="p-3.5 bg-white border border-neutral-300 hover:border-neutral-900 hover:bg-neutral-50 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Usb className="w-5 h-5 text-neutral-700" />
+                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                      USB Cable
+                    </span>
+                  </div>
+                  <span className="font-bold text-neutral-900 text-xs block">
+                    Connect WebUSB
+                  </span>
+                  <span className="text-[10px] text-neutral-500">
+                    TVS, TSC, Xprinter, Thermal POS
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await connectBluetooth();
+                    if (ok) setShowConnectModal(false);
+                  }}
+                  disabled={isConnectingPrinter}
+                  className="p-3.5 bg-white border border-neutral-300 hover:border-neutral-900 hover:bg-neutral-50 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Bluetooth className="w-5 h-5 text-neutral-700" />
+                    <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                      Wireless
+                    </span>
+                  </div>
+                  <span className="font-bold text-neutral-900 text-xs block">
+                    Connect Bluetooth
+                  </span>
+                  <span className="text-[10px] text-neutral-500">
+                    Wireless Thermal Label Machine
+                  </span>
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-neutral-100 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConnectModal(false);
+                    handleSystemPrint();
+                  }}
+                  className="w-full py-2.5 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl font-bold text-xs cursor-pointer"
+                >
+                  Use Browser Print Dialog (Normal Modal) Instead
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ============================================================== */}
       {/* PRINT-ONLY CONTAINER (2-Columns Layout for Dual Sticker Rolls) */}
