@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import AppLayout from "../components/AppLayout";
 import { db } from "../../lib/firebase";
+import { usePrinter } from "../../lib/printer";
 import {
   collection,
   query,
@@ -149,6 +150,7 @@ interface SettledSaleDoc {
 }
 
 export default function PosBillingPage() {
+  const { printReceipt, connectedPrinter } = usePrinter();
   const [stores, setStores] = useState<StoreBranch[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>("");
   const [items, setItems] = useState<ItemProduct[]>([]);
@@ -1864,11 +1866,15 @@ export default function PosBillingPage() {
               <div className="p-4 px-6 border-t border-neutral-100 bg-white flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg cursor-pointer"
+                  onClick={() => completedSale && printReceipt(completedSale)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg cursor-pointer shadow-xs transition-all"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Print Thermal Receipt</span>
+                  <span>
+                    {connectedPrinter?.isConnected
+                      ? `Print Direct (${connectedPrinter.type.toUpperCase()})`
+                      : "Print Thermal Receipt"}
+                  </span>
                 </button>
                 <button
                   type="button"

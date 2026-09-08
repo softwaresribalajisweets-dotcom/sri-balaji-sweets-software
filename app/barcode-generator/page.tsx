@@ -314,11 +314,11 @@ export default function BarcodeGeneratorPage() {
     window.print();
   };
 
-  // Download sticker as high-res PNG
+  // Download sticker as high-res PNG (with Left Logo space)
   const handleDownloadPng = () => {
     const canvas = document.createElement("canvas");
     const width = 360;
-    const height = 220;
+    const height = 210;
     canvas.width = width * 2; // 2x for retina quality
     canvas.height = height * 2;
     const ctx = canvas.getContext("2d");
@@ -328,21 +328,30 @@ export default function BarcodeGeneratorPage() {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
 
-    // 1. Business Name (Centered Bold)
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 15px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(businessName.toUpperCase(), width / 2, 24);
+    // Border
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(4, 4, width - 8, height - 8);
 
-    // 2. Item Title (Left) & Unit (Right)
-    ctx.font = "bold 12px sans-serif";
+    // Left side: Empty Space for Logo (width: 75px)
+    const logoColWidth = 75;
+
+    // 1. Right Side: Business Name (Centered Bold)
+    const contentX = logoColWidth + (width - logoColWidth) / 2;
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(businessName.toUpperCase(), contentX, 24);
+
+    // 3. Right Side: Item Title (Left) & Unit (Right)
+    ctx.font = "bold 10.5px sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(itemTitle.toUpperCase(), 16, 48);
+    ctx.fillText(itemTitle.toUpperCase(), logoColWidth + 10, 44);
 
     ctx.textAlign = "right";
-    ctx.fillText(unitLabel.toUpperCase(), width - 16, 48);
+    ctx.fillText(unitLabel.toUpperCase(), width - 12, 44);
 
-    // 3. Draw Barcode SVG onto Canvas
+    // 4. Draw Barcode SVG onto Right Side
     if (previewSvgRef.current) {
       const svgData = new XMLSerializer().serializeToString(previewSvgRef.current);
       const img = new Image();
@@ -350,20 +359,20 @@ export default function BarcodeGeneratorPage() {
       const url = URL.createObjectURL(svgBlob);
 
       img.onload = () => {
-        const barcodeWidth = width - 32;
-        const barcodeHeight = 70;
-        ctx.drawImage(img, 16, 60, barcodeWidth, barcodeHeight);
+        const barcodeWidth = width - logoColWidth - 20;
+        const barcodeHeight = 75;
+        ctx.drawImage(img, logoColWidth + 10, 54, barcodeWidth, barcodeHeight);
         URL.revokeObjectURL(url);
 
-        // 4. Bottom Line: Barcode ID + Batch # (Left) & MRP (Right)
+        // 5. Bottom Line: Barcode ID + Batch # (Left) & MRP (Right)
         ctx.fillStyle = "#000000";
-        ctx.font = "bold 13px monospace";
+        ctx.font = "bold 11px monospace";
         ctx.textAlign = "left";
-        ctx.fillText(`${barcodeId} • B#${activeBatchNumber}`, 16, 158);
+        ctx.fillText(`#${barcodeId} • B#${activeBatchNumber}`, logoColWidth + 10, 150);
 
-        ctx.font = "bold 14px sans-serif";
+        ctx.font = "bold 13px sans-serif";
         ctx.textAlign = "right";
-        ctx.fillText(`MRP: ${mrp}/-`, width - 16, 158);
+        ctx.fillText(`MRP: Rs.${mrp}/-`, width - 12, 150);
 
         // Save file
         const dataUrl = canvas.toDataURL("image/png");
@@ -856,53 +865,104 @@ export default function BarcodeGeneratorPage() {
               <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
                 <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Eye className="w-4 h-4 text-neutral-700" />
-                  Live Sticker Preview
+                  2-Column Printer Row Preview
                 </span>
-                <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
-                  50mm × 30mm Label
+                <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 uppercase font-bold">
+                  2 Stickers / Row (50mm × 30mm each)
                 </span>
               </div>
 
-              {/* Exact Barcode Sticker Container */}
-              <div className="flex justify-center p-4 bg-neutral-100/70 rounded-xl border border-dashed border-neutral-300">
-                <div
-                  className="bg-white text-black p-3.5 rounded-lg border border-neutral-400 shadow-md flex flex-col justify-between select-none"
-                  style={{
-                    width: "280px",
-                    minHeight: "155px",
-                    fontFamily: "Arial, Helvetica, sans-serif",
-                  }}
-                >
-                  {/* Top Business Name */}
-                  <div className="text-center font-black text-sm tracking-wide text-black uppercase">
-                    {businessName || "SRI BALAJI SWEETS"}
-                  </div>
+              {/* 2-Columns Dual Sticker Row Preview Container */}
+              <div className="p-3 bg-neutral-100/80 rounded-xl border border-dashed border-neutral-300 space-y-2">
+                <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider text-center">
+                  Thermal Roll Preview (Left & Right Column)
+                </div>
 
-                  {/* Line 2: Item Name (Left) & Unit (Right) */}
-                  <div className="flex items-center justify-between text-[11px] font-black tracking-tight text-black mt-1 uppercase">
-                    <span className="truncate pr-1">{itemTitle || "250 GRAMS BOX"}</span>
-                    <span className="shrink-0">{unitLabel || "1 PC"}</span>
-                  </div>
-
-                  {/* Middle Barcode Graphic (Encodes itembarcodeid*weight*batchnumber) */}
-                  <div className="my-1.5 flex justify-center items-center overflow-hidden">
-                    <svg
-                      ref={previewSvgRef}
-                      className="w-full max-h-12"
-                      style={{ shapeRendering: "crispEdges" }}
-                    ></svg>
-                  </div>
-
-                  {/* Bottom Line: Barcode ID + Batch Code (Left) & MRP (Right) */}
-                  <div className="flex items-center justify-between text-xs mt-1">
-                    <div className="flex items-center gap-1.5 font-mono">
-                      <span className="font-bold text-black">{barcodeId || "7707"}</span>
-                      <span className="text-neutral-400 font-normal">•</span>
-                      <span className="font-bold text-black">B#{activeBatchNumber}</span>
+                <div className="grid grid-cols-2 gap-2 justify-center">
+                  {/* Column 1 Sticker */}
+                  <div
+                    className="bg-white text-black p-2 rounded-md border border-neutral-400 shadow-sm flex flex-row items-stretch select-none"
+                    style={{
+                      height: "125px",
+                      fontFamily: "Arial, Helvetica, sans-serif",
+                    }}
+                  >
+                    {/* Left Side: Empty Space for Pre-printed Logo */}
+                    <div className="w-12 border-r border-dashed border-neutral-300 pr-1 flex flex-col items-center justify-center shrink-0 bg-neutral-50/50 rounded-l">
+                      <span className="text-[7px] font-bold text-neutral-400 -rotate-90 uppercase tracking-wider">
+                        Logo Space
+                      </span>
                     </div>
-                    <span className="font-black text-sm text-black">
-                      MRP: {mrp}/-
-                    </span>
+
+                    {/* Right Side: Sticker Content */}
+                    <div className="flex-1 pl-2 flex flex-col justify-between overflow-hidden min-w-0">
+                      <div className="text-center font-black text-[10px] tracking-tight text-black uppercase truncate">
+                        {businessName || "SRI BALAJI SWEETS"}
+                      </div>
+                      <div className="flex items-center justify-between text-[8px] font-black tracking-tight text-black uppercase">
+                        <span className="truncate pr-0.5">{itemTitle || "250 GRAMS BOX"}</span>
+                        <span className="shrink-0">{unitLabel || "1 PC"}</span>
+                      </div>
+                      <div className="my-0.5 flex justify-center items-center overflow-hidden h-7">
+                        <svg
+                          ref={previewSvgRef}
+                          className="w-full h-full"
+                          style={{ shapeRendering: "crispEdges" }}
+                        ></svg>
+                      </div>
+                      <div className="flex items-center justify-between text-[8px] font-bold">
+                        <div className="flex items-center gap-1 font-mono text-[7px]">
+                          <span>#{barcodeId || "7707"}</span>
+                          <span>•</span>
+                          <span>B#{activeBatchNumber}</span>
+                        </div>
+                        <span className="font-black text-[9px]">
+                          MRP: {mrp}/-
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Column 2 Sticker (Adjacent Label) */}
+                  <div
+                    className="bg-white text-black p-2 rounded-md border border-neutral-400 shadow-sm flex flex-row items-stretch select-none"
+                    style={{
+                      height: "125px",
+                      fontFamily: "Arial, Helvetica, sans-serif",
+                    }}
+                  >
+                    {/* Left Side: Empty Space for Pre-printed Logo */}
+                    <div className="w-12 border-r border-dashed border-neutral-300 pr-1 flex flex-col items-center justify-center shrink-0 bg-neutral-50/50 rounded-l">
+                      <span className="text-[7px] font-bold text-neutral-400 -rotate-90 uppercase tracking-wider">
+                        Logo Space
+                      </span>
+                    </div>
+
+                    {/* Right Side: Sticker Content */}
+                    <div className="flex-1 pl-2 flex flex-col justify-between overflow-hidden min-w-0">
+                      <div className="text-center font-black text-[10px] tracking-tight text-black uppercase truncate">
+                        {businessName || "SRI BALAJI SWEETS"}
+                      </div>
+                      <div className="flex items-center justify-between text-[8px] font-black tracking-tight text-black uppercase">
+                        <span className="truncate pr-0.5">{itemTitle || "250 GRAMS BOX"}</span>
+                        <span className="shrink-0">{unitLabel || "1 PC"}</span>
+                      </div>
+                      <div className="my-0.5 flex justify-center items-center overflow-hidden h-7">
+                        <div className="font-mono text-[8px] text-neutral-400 text-center tracking-widest">
+                          ||||||||||||||||||||||||||
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-[8px] font-bold">
+                        <div className="flex items-center gap-1 font-mono text-[7px]">
+                          <span>#{barcodeId || "7707"}</span>
+                          <span>•</span>
+                          <span>B#{activeBatchNumber}</span>
+                        </div>
+                        <span className="font-black text-[9px]">
+                          MRP: {mrp}/-
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -936,7 +996,7 @@ export default function BarcodeGeneratorPage() {
                   className="w-full flex items-center justify-center gap-2 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Print {activeTab === "single" ? printQuantity : totalBatchStickers} Stickers Now</span>
+                  <span>Print {activeTab === "single" ? printQuantity : totalBatchStickers} Stickers (2-Col Printer)</span>
                 </button>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -1012,7 +1072,7 @@ export default function BarcodeGeneratorPage() {
       </div>
 
       {/* ============================================================== */}
-      {/* PRINT-ONLY CONTAINER (Displayed strictly during window.print)  */}
+      {/* PRINT-ONLY CONTAINER (2-Columns Layout for Dual Sticker Rolls) */}
       {/* ============================================================== */}
       <div className="hidden print:block">
         <style
@@ -1025,28 +1085,109 @@ export default function BarcodeGeneratorPage() {
                 padding: 0 !important;
               }
               @page {
-                margin: 2mm;
+                margin: 0 !important;
                 size: auto;
               }
               .barcode-print-sheet {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                gap: 4mm !important;
-                justify-content: flex-start !important;
+                display: grid !important;
+                grid-template-columns: 50mm 50mm !important;
+                column-gap: 3mm !important;
+                row-gap: 2mm !important;
+                justify-content: center !important;
+                width: 100% !important;
+                padding: 1mm !important;
               }
               .barcode-sticker-card {
                 width: 50mm !important;
                 height: 30mm !important;
-                padding: 2mm !important;
+                padding: 1.2mm 1.5mm !important;
                 box-sizing: border-box !important;
                 page-break-inside: avoid !important;
                 border: 0.5pt solid #000000 !important;
                 display: flex !important;
-                flex-direction: column !important;
-                justify-content: space-between !important;
+                flex-direction: row !important;
+                align-items: stretch !important;
+                gap: 1.5mm !important;
                 background: white !important;
                 color: black !important;
                 font-family: Arial, sans-serif !important;
+                overflow: hidden !important;
+              }
+              .sticker-logo-column {
+                width: 11mm !important;
+                flex-shrink: 0 !important;
+                background: transparent !important;
+              }
+              .sticker-content-column {
+                flex: 1 !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: space-between !important;
+                min-width: 0 !important;
+                overflow: hidden !important;
+              }
+              .sticker-business-title {
+                text-align: center !important;
+                font-weight: 900 !important;
+                font-size: 7pt !important;
+                line-height: 1 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.2px !important;
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+              }
+              .sticker-item-row {
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+                font-weight: 900 !important;
+                font-size: 6pt !important;
+                line-height: 1 !important;
+                text-transform: uppercase !important;
+                margin-top: 0.5mm !important;
+              }
+              .sticker-item-title {
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+                white-space: nowrap !important;
+                max-width: 72% !important;
+              }
+              .sticker-item-unit {
+                white-space: nowrap !important;
+                font-size: 5.5pt !important;
+              }
+              .sticker-barcode-wrap {
+                display: flex !important;
+                justify-content: center !important;
+                align-items: center !important;
+                margin: 0.5mm 0 !important;
+                overflow: hidden !important;
+                height: 8mm !important;
+              }
+              .sticker-barcode-svg {
+                width: 100% !important;
+                height: 100% !important;
+                shape-rendering: crispEdges !important;
+              }
+              .sticker-bottom-row {
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+                font-size: 6pt !important;
+                line-height: 1 !important;
+                font-weight: 900 !important;
+              }
+              .sticker-batch-info {
+                display: flex !important;
+                align-items: center !important;
+                gap: 1mm !important;
+                font-family: monospace !important;
+                font-size: 5.5pt !important;
+              }
+              .sticker-mrp-info {
+                font-size: 6.5pt !important;
+                font-weight: 900 !important;
               }
             }
           `,
@@ -1088,7 +1229,7 @@ export default function BarcodeGeneratorPage() {
 }
 
 /**
- * Printable Individual Barcode Sticker Card
+ * Printable Individual Barcode Sticker Card (With Left Side Logo Space)
  */
 function PrintableStickerCard({
   businessName,
@@ -1118,8 +1259,8 @@ function PrintableStickerCard({
         format: "CODE128",
         displayValue: false,
         margin: 0,
-        height: 30,
-        width: 1.3,
+        height: 24,
+        width: 1.15,
         lineColor: "#000000",
       });
     } catch (e) {
@@ -1129,89 +1270,38 @@ function PrintableStickerCard({
 
   return (
     <div className="barcode-sticker-card">
-      {/* Top Business Name */}
-      <div
-        style={{
-          textAlign: "center",
-          fontWeight: 900,
-          fontSize: "10pt",
-          lineHeight: "1.1",
-          textTransform: "uppercase",
-          letterSpacing: "0.2px",
-        }}
-      >
-        {businessName || "SRI BALAJI SWEETS"}
-      </div>
+      {/* Left Column: Empty Space for Pre-printed Logo */}
+      <div className="sticker-logo-column"></div>
 
-      {/* Line 2: Item Name (Left) & Unit (Right) */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontWeight: 900,
-          fontSize: "7.5pt",
-          lineHeight: "1.1",
-          textTransform: "uppercase",
-          marginTop: "1mm",
-        }}
-      >
-        <span
-          style={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            maxWidth: "75%",
-          }}
-        >
-          {itemTitle}
-        </span>
-        <span style={{ whiteSpace: "nowrap" }}>{unitLabel}</span>
-      </div>
-
-      {/* Middle Barcode (Encodes itembarcodeid*weight*batchnumber) */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          margin: "1mm 0",
-          overflow: "hidden",
-        }}
-      >
-        <svg
-          ref={svgRef}
-          style={{ width: "100%", maxHeight: "12mm", shapeRendering: "crispEdges" }}
-        ></svg>
-      </div>
-
-      {/* Bottom Line: Barcode ID + Batch Code (Left) & MRP (Right) */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontSize: "8pt",
-          lineHeight: "1.1",
-          fontWeight: 900,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "1.5mm",
-            fontFamily: "monospace",
-            fontSize: "8pt",
-          }}
-        >
-          <span>{barcodeId}</span>
-          <span>•</span>
-          <span>B#{batchCode}</span>
+      {/* Right Column: Main Sticker Content */}
+      <div className="sticker-content-column">
+        {/* Top: Business Name */}
+        <div className="sticker-business-title">
+          {businessName || "SRI BALAJI SWEETS"}
         </div>
-        <span style={{ fontSize: "8.5pt", fontWeight: 900 }}>
-          MRP: {mrp}/-
-        </span>
+
+        {/* Subheader: Item Name (Left) & Unit (Right) */}
+        <div className="sticker-item-row">
+          <span className="sticker-item-title">{itemTitle}</span>
+          <span className="sticker-item-unit">{unitLabel}</span>
+        </div>
+
+        {/* Middle: Barcode Graphic */}
+        <div className="sticker-barcode-wrap">
+          <svg ref={svgRef} className="sticker-barcode-svg"></svg>
+        </div>
+
+        {/* Bottom: ID + Batch (Left) & MRP (Right) */}
+        <div className="sticker-bottom-row">
+          <div className="sticker-batch-info">
+            <span>#{barcodeId}</span>
+            <span>•</span>
+            <span>B#{batchCode}</span>
+          </div>
+          <span className="sticker-mrp-info">
+            MRP: ₹{mrp}/-
+          </span>
+        </div>
       </div>
     </div>
   );
