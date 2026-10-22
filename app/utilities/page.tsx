@@ -154,6 +154,17 @@ export default function UtilitiesPage() {
   // View Rack Contents Modal State
   const [viewRack, setViewRack] = useState<RackItem | null>(null);
 
+  // MULTIPLE Items Move Between Serials Modal State
+  const [moveSerial, setMoveSerial] = useState<SerialItem | null>(null);
+  const [serialItemsToMove, setSerialItemsToMove] = useState<
+    { itemId: string; quantity: number }[]
+  >([{ itemId: "", quantity: 1 }]);
+  const [targetSerialId, setTargetSerialId] = useState("");
+  const [movingSerialItems, setMovingSerialItems] = useState(false);
+
+  // View Serial Contents Modal State
+  const [viewSerial, setViewSerial] = useState<SerialItem | null>(null);
+
   // Filter & Search State
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -243,6 +254,13 @@ export default function UtilitiesPage() {
     setMoveRack(rack);
     setRackItemsToMove([{ itemId: "", quantity: 1 }]);
     setTargetRackId("");
+  };
+
+  // Open Move Items Modal for Serial
+  const handleOpenMoveItemsSerial = (serial: SerialItem) => {
+    setMoveSerial(serial);
+    setSerialItemsToMove([{ itemId: "", quantity: 1 }]);
+    setTargetSerialId("");
   };
 
   // Single Rack Creation
@@ -598,6 +616,152 @@ export default function UtilitiesPage() {
       alert(`Error moving items: ${err.message}`);
     } finally {
       setMovingItems(false);
+    }
+  };
+
+  // MULTIPLE Items Move Between Serials Handler
+  const handleMoveMultipleSerialItemsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!moveSerial || !targetSerialId) {
+      alert("Please select target destination serial number.");
+      return;
+    }
+
+    const targetSerial = serials.find((s) => s.id === targetSerialId);
+    if (!targetSerial) {
+      alert("Target serial number not found.");
+      return;
+    }
+
+    const validMoveRows = serialItemsToMove.filter(
+      (r) => r.itemId && Number(r.quantity) > 0
+    );
+    if (validMoveRows.length === 0) {
+      alert("Please select at least one item to move.");
+      return;
+    }
+
+    try {
+      setMovingSerialItems(true);
+      let sourceItems = [...(moveSerial.assignedItems || [])];
+      let targetItems = [...(targetSerial.assignedItems || [])];
+
+      for (const moveRow of validMoveRows) {
+        const sourceIdx = sourceItems.findIndex((i) => i.itemId === moveRow.itemId);
+        if (sourceIdx < 0) continue;
+
+        const itemToMove = sourceItems[sourceIdx];
+        const moveQty = Number(moveRow.quantity) || 1;
+
+        if (moveQty > itemToMove.quantity) {
+          alert(
+            `Cannot move ${moveQty} units of "${itemToMove.name}". Available: ${itemToMove.quantity}`
+          );
+          setMovingSerialItems(false);
+          return;
+        }
+
+        // Deduct from source
+        if (itemToMove.quantity - moveQty === 0) {
+          sourceItems.splice(sourceIdx, 1);
+        } else {
+          sourceItems[sourceIdx] = {
+            ...itemToMove,
+            quantity: itemToMove.quantity - moveQty,
+          };
+        }
+
+        // Add to target
+        const targetIdx = targetItems.findIndex((i) => i.itemId === moveRow.itemId);
+        if (targetIdx >= 0) {
+          targetItems[targetIdx] = {
+            ...targetItems[targetIdx],
+            quantity: targetItems[targetIdx].quantity + moveQty,
+          };
+        } else {
+          targetItems.push({
+            itemId: itemToMove.itemId,
+            name: itemToMove.name,
+            barcodeId: itemToMove.barcodeId,
+            quantity: moveQty,
+          });
+        }
+      }
+
+      // Update source serial in Firestore
+      const sourceStatus = sourceItems.length > 0 ? "Assigned" : "Available";
+      const sourceItemName = sourceItems.length > 0 ? sourceItems[0].name : moveSerial.itemName;
+      await updateDoc(doc(db, "serials", moveSerial.id), {
+        assignedItems: sourceItems,
+        status: sourceStatus,
+        itemName: sourceItemName,
+      });
+
+      // Update target serial in Firestore
+      const targetStatus = targetItems.length > 0 ? "Assigned" : "Available";
+      const targetItemName = targetItems.length > 0 ? targetItems[0].name : targetSerial.itemName;
+      await updateDoc(doc(db, "serials", targetSerial.id), {
+        assignedItems: targetItems,
+        status: targetStatus,
+        itemName: targetItemName,
+      });
+
+      setMoveSerial(null);
+      setSerialItemsToMove([{ itemId: "", quantity: 1 }]);
+      setTargetSerialId("");
+      alert(`Successfully transferred items to Serial ${targetSerial.serialNumber}!`);
+    } catch (err: any) {
+      console.error("Error moving items between serials:", err);
+      alert(`Error moving items: ${err.message}`);
+    } finally {
+      setMovingSerialItems(false);
+    }
+  };
+
+  // Remove single item from Serial
+  const handleRemoveItemFromSerial = async (serialId: string, itemId: string) => {
+    const serial = serials.find((s) => s.id === serialId);
+    if (!serial) return;
+    if (!confirm("Are you sure you want to remove this product from this serial?")) return;
+
+    try {
+      const updatedItems = (serial.assignedItems || []).filter((i) => i.itemId !== itemId);
+      const status = updatedItems.length > 0 ? "Assigned" : "Available";
+      const itemName = updatedItems.length > 0 ? updatedItems[0].name : "Uncategorized Item";
+
+      await updateDoc(doc(db, "serials", serialId), {
+        assignedItems: updatedItems,
+        status,
+        itemName,
+      });
+
+      setViewSerial((prev) =>
+        prev && prev.id === serialId
+          ? { ...prev, assignedItems: updatedItems, status: status as any, itemName }
+          : prev
+      );
+    } catch (err: any) {
+      alert(`Failed to remove item: ${err.message}`);
+    }
+  };
+
+  // Remove single item from Rack
+  const handleRemoveItemFromRack = async (rackId: string, itemId: string) => {
+    const rack = racks.find((r) => r.id === rackId);
+    if (!rack) return;
+    if (!confirm("Are you sure you want to remove this product from this rack?")) return;
+
+    try {
+      const updatedItems = (rack.assignedItems || []).filter((i) => i.itemId !== itemId);
+      await updateDoc(doc(db, "racks", rackId), {
+        assignedItems: updatedItems,
+      });
+
+      setViewRack((prev) =>
+        prev && prev.id === rackId ? { ...prev, assignedItems: updatedItems } : prev
+      );
+    } catch (err: any) {
+      alert(`Failed to remove item: ${err.message}`);
     }
   };
 
@@ -1137,82 +1301,113 @@ export default function UtilitiesPage() {
           ) : (
             /* ================= RACKS GRID VIEW ================= */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredRacks.map((rack) => (
-                <div
-                  key={rack.id}
-                  className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-3">
-                      <div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 font-mono">
-                          {rack.code}
-                        </span>
-                        <h3 className="text-sm font-bold text-neutral-900 mt-1">
-                          {rack.name}
-                        </h3>
+              {filteredRacks.map((rack) => {
+                const itemCount = rack.assignedItems?.length || 0;
+                const totalQty =
+                  rack.assignedItems?.reduce(
+                    (acc, item) => acc + (item.quantity || 1),
+                    0
+                  ) || 0;
+
+                return (
+                  <div
+                    key={rack.id}
+                    className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 font-mono">
+                            {rack.code}
+                          </span>
+                          <h3 className="text-sm font-bold text-neutral-900 mt-1">
+                            {rack.name}
+                          </h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRack(rack.id)}
+                          className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                          title="Delete Rack"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
+
+                      <div className="bg-neutral-50 border border-neutral-200/80 rounded-lg p-3 flex flex-col items-center justify-center my-3 relative group">
+                        {rack.qrCodeUrl ? (
+                          <img
+                            src={rack.qrCodeUrl}
+                            alt={`QR for ${rack.name}`}
+                            className="w-36 h-36 object-contain rounded bg-white p-1 border border-neutral-200 shadow-2xs"
+                          />
+                        ) : (
+                          <div className="w-36 h-36 flex items-center justify-center bg-neutral-100 rounded text-neutral-400">
+                            <QrCode className="w-8 h-8" />
+                          </div>
+                        )}
+                        <span className="text-[10px] text-neutral-500 mt-2 font-mono flex items-center gap-1">
+                          <Package className="w-3 h-3 text-amber-600" />
+                          {itemCount} Products ({totalQty} units)
+                        </span>
+                      </div>
+
+                      {rack.notes && (
+                        <p className="text-xs text-neutral-500 italic mb-2">
+                          "{rack.notes}"
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-neutral-100 grid grid-cols-2 gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleDeleteRack(rack.id)}
-                        className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
-                        title="Delete Rack"
+                        onClick={() => handleOpenAddItemsRack(rack)}
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-semibold cursor-pointer hover:bg-emerald-100"
+                        title="Add items to this rack"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <PackagePlus className="w-3.5 h-3.5" />
+                        <span>+ Add</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenMoveItemsRack(rack)}
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-white text-neutral-800 border border-neutral-300 rounded-lg text-xs font-semibold cursor-pointer hover:bg-neutral-50"
+                        title="Move items to another rack"
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Move</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setViewRack(rack)}
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-white text-neutral-800 border border-neutral-300 rounded-lg text-xs font-semibold cursor-pointer hover:bg-neutral-50"
+                        title="View rack items"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>View</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPrintItem({
+                            title: rack.name,
+                            subtitle: `RACK CODE: ${rack.code}`,
+                            qrCodeUrl: rack.qrCodeUrl,
+                          })
+                        }
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer hover:bg-neutral-800"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Print</span>
                       </button>
                     </div>
-
-                    <div className="bg-neutral-50 border border-neutral-200/80 rounded-lg p-3 flex flex-col items-center justify-center my-3 relative group">
-                      {rack.qrCodeUrl ? (
-                        <img
-                          src={rack.qrCodeUrl}
-                          alt={`QR for ${rack.name}`}
-                          className="w-36 h-36 object-contain rounded bg-white p-1 border border-neutral-200 shadow-2xs"
-                        />
-                      ) : (
-                        <div className="w-36 h-36 flex items-center justify-center bg-neutral-100 rounded text-neutral-400">
-                          <QrCode className="w-8 h-8" />
-                        </div>
-                      )}
-                      <span className="text-[10px] text-neutral-400 mt-2 font-mono flex items-center gap-1">
-                        <Sparkles className="w-3 h-3 text-amber-500" />
-                        ImageKit CDN Hosted
-                      </span>
-                    </div>
-
-                    {rack.notes && (
-                      <p className="text-xs text-neutral-500 italic mb-2">
-                        "{rack.notes}"
-                      </p>
-                    )}
                   </div>
-
-                  <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAddItemsRack(rack)}
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-semibold cursor-pointer"
-                    >
-                      <PackagePlus className="w-3.5 h-3.5" />
-                      <span>+ Add Items</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPrintItem({
-                          title: rack.name,
-                          subtitle: `RACK CODE: ${rack.code}`,
-                          qrCodeUrl: rack.qrCodeUrl,
-                        })
-                      }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Print</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1333,88 +1528,20 @@ export default function UtilitiesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200/60 text-xs">
-                    {filteredSerials.map((s) => (
-                      <tr
-                        key={s.id}
-                        className="hover:bg-neutral-50/60 transition-colors"
-                      >
-                        <td className="py-3 px-4">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPrintItem({
-                                title: s.itemName,
-                                subtitle: `SERIAL NO: ${s.serialNumber}`,
-                                qrCodeUrl: s.qrCodeUrl,
-                              })
-                            }
-                            className="cursor-pointer"
-                            title="Click to view tag"
-                          >
-                            <img
-                              src={s.qrCodeUrl}
-                              alt={`QR for ${s.serialNumber}`}
-                              className="w-11 h-11 object-contain rounded-lg border border-neutral-300 p-0.5 bg-white shadow-2xs"
-                            />
-                          </button>
-                        </td>
+                    {filteredSerials.map((s) => {
+                      const itemCount = s.assignedItems?.length || 0;
+                      const totalQty =
+                        s.assignedItems?.reduce(
+                          (acc, item) => acc + (item.quantity || 1),
+                          0
+                        ) || 0;
 
-                        <td className="py-3 px-4">
-                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-200">
-                            {s.serialNumber}
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <div className="font-bold text-neutral-900">
-                            {s.itemName}
-                          </div>
-                          {s.assignedItems && s.assignedItems.length > 0 && (
-                            <div className="text-[10px] text-neutral-500 mt-0.5 font-mono">
-                              {s.assignedItems.length} products assigned
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <span
-                            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
-                              s.status === "Assigned"
-                                ? "bg-purple-50 text-purple-800 border-purple-200"
-                                : "bg-emerald-50 text-emerald-800 border-emerald-200"
-                            }`}
-                          >
-                            {s.status || "Available"}
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {/* Assign Multiple Items to Serial */}
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAddItemsSerial(s)}
-                              className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
-                              title="Assign products from items list to this serial"
-                            >
-                              <PackagePlus className="w-3.5 h-3.5 text-blue-600" />
-                              <span>+ Assign Items</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleDownloadQR(
-                                  s.qrCodeUrl,
-                                  `SN_${s.serialNumber}_QR.png`
-                                )
-                              }
-                              className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
-                              title="Download QR"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-
+                      return (
+                        <tr
+                          key={s.id}
+                          className="hover:bg-neutral-50/60 transition-colors group"
+                        >
+                          <td className="py-3 px-4">
                             <button
                               type="button"
                               onClick={() =>
@@ -1424,24 +1551,137 @@ export default function UtilitiesPage() {
                                   qrCodeUrl: s.qrCodeUrl,
                                 })
                               }
-                              className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
-                              title="Print Tag"
+                              className="cursor-pointer"
+                              title="Click to view tag"
                             >
-                              <Printer className="w-3.5 h-3.5" />
+                              <img
+                                src={s.qrCodeUrl}
+                                alt={`QR for ${s.serialNumber}`}
+                                className="w-11 h-11 object-contain rounded-lg border border-neutral-300 p-0.5 bg-white shadow-2xs"
+                              />
                             </button>
+                          </td>
 
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSerial(s.id)}
-                              className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
-                              title="Delete Serial"
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-200">
+                                {s.serialNumber}
+                              </span>
+                              <span className="font-bold text-neutral-900 text-sm">
+                                {s.itemName}
+                              </span>
+                            </div>
+                            {s.notes && (
+                              <p className="text-[11px] text-neutral-500 mt-0.5">
+                                {s.notes}
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                  itemCount > 0
+                                    ? "bg-blue-50 text-blue-800 border border-blue-200"
+                                    : "bg-neutral-100 text-neutral-600 border border-neutral-200"
+                                }`}
+                              >
+                                <Package className="w-3 h-3" />
+                                {itemCount} Products ({totalQty} total units)
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <span
+                              className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                                s.status === "Assigned" || itemCount > 0
+                                  ? "bg-purple-50 text-purple-800 border-purple-200"
+                                  : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              }`}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              {itemCount > 0 ? "Assigned" : (s.status || "Available")}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Assign Multiple Items to Serial */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddItemsSerial(s)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                                title="Assign products to this serial"
+                              >
+                                <PackagePlus className="w-3.5 h-3.5 text-blue-600" />
+                                <span>+ Assign</span>
+                              </button>
+
+                              {/* Move Items Between Serials */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenMoveItemsSerial(s)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                                title="Move items to another serial"
+                              >
+                                <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600" />
+                                <span>Move</span>
+                              </button>
+
+                              {/* View Serial Items */}
+                              <button
+                                type="button"
+                                onClick={() => setViewSerial(s)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-800 rounded-lg text-xs font-semibold shadow-2xs cursor-pointer"
+                                title="View serial assigned items"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-neutral-600" />
+                                <span>View</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleDownloadQR(
+                                    s.qrCodeUrl,
+                                    `SN_${s.serialNumber}_QR.png`
+                                  )
+                                }
+                                className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
+                                title="Download QR"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPrintItem({
+                                    title: s.itemName,
+                                    subtitle: `SERIAL NO: ${s.serialNumber}`,
+                                    qrCodeUrl: s.qrCodeUrl,
+                                  })
+                                }
+                                className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg border border-neutral-200 cursor-pointer"
+                                title="Print Tag"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSerial(s.id)}
+                                className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                                title="Delete Serial"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1449,65 +1689,117 @@ export default function UtilitiesPage() {
           ) : (
             /* ================= SERIALS GRID VIEW ================= */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredSerials.map((s) => (
-                <div
-                  key={s.id}
-                  className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-3">
-                      <div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200 font-mono">
-                          SN: {s.serialNumber}
-                        </span>
-                        <h3 className="text-sm font-bold text-neutral-900 mt-1">
-                          {s.itemName}
-                        </h3>
+              {filteredSerials.map((s) => {
+                const itemCount = s.assignedItems?.length || 0;
+                const totalQty =
+                  s.assignedItems?.reduce(
+                    (acc, item) => acc + (item.quantity || 1),
+                    0
+                  ) || 0;
+
+                return (
+                  <div
+                    key={s.id}
+                    className="bg-white border border-neutral-200/90 rounded-xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200 font-mono">
+                              SN: {s.serialNumber}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full border ${
+                                itemCount > 0
+                                  ? "bg-purple-50 text-purple-700 border-purple-200"
+                                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              }`}
+                            >
+                              {itemCount > 0 ? "Assigned" : (s.status || "Available")}
+                            </span>
+                          </div>
+                          <h3 className="text-sm font-bold text-neutral-900 mt-1">
+                            {s.itemName}
+                          </h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSerial(s.id)}
+                          className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
+
+                      <div className="bg-neutral-50 border border-neutral-200/80 rounded-lg p-3 flex flex-col items-center justify-center my-3 relative group">
+                        <img
+                          src={s.qrCodeUrl}
+                          alt={`QR for ${s.serialNumber}`}
+                          className="w-36 h-36 object-contain rounded bg-white p-1 border border-neutral-200 shadow-2xs"
+                        />
+                        <span className="text-[10px] text-neutral-500 mt-2 font-mono flex items-center gap-1">
+                          <Package className="w-3 h-3 text-blue-600" />
+                          {itemCount} Products ({totalQty} units)
+                        </span>
+                      </div>
+
+                      {s.notes && (
+                        <p className="text-xs text-neutral-500 italic mb-2">
+                          "{s.notes}"
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-neutral-100 grid grid-cols-2 gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleDeleteSerial(s.id)}
-                        className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                        onClick={() => handleOpenAddItemsSerial(s)}
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-blue-50 text-blue-800 border border-blue-200 rounded-lg text-xs font-semibold cursor-pointer hover:bg-blue-100"
+                        title="Assign items to this serial"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <PackagePlus className="w-3.5 h-3.5" />
+                        <span>+ Assign</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenMoveItemsSerial(s)}
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-white text-neutral-800 border border-neutral-300 rounded-lg text-xs font-semibold cursor-pointer hover:bg-neutral-50"
+                        title="Move items to another serial"
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Move</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setViewSerial(s)}
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-white text-neutral-800 border border-neutral-300 rounded-lg text-xs font-semibold cursor-pointer hover:bg-neutral-50"
+                        title="View serial assigned items"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>View</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPrintItem({
+                            title: s.itemName,
+                            subtitle: `SERIAL NO: ${s.serialNumber}`,
+                            qrCodeUrl: s.qrCodeUrl,
+                          })
+                        }
+                        className="flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer hover:bg-neutral-800"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Print</span>
                       </button>
                     </div>
-
-                    <div className="bg-neutral-50 border border-neutral-200/80 rounded-lg p-3 flex flex-col items-center justify-center my-3">
-                      <img
-                        src={s.qrCodeUrl}
-                        alt={`QR for ${s.serialNumber}`}
-                        className="w-36 h-36 object-contain rounded bg-white p-1 border border-neutral-200 shadow-2xs"
-                      />
-                    </div>
                   </div>
-
-                  <div className="pt-3 border-t border-neutral-100 flex items-center justify-between gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAddItemsSerial(s)}
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-blue-50 text-blue-800 border border-blue-200 rounded-lg text-xs font-semibold cursor-pointer"
-                    >
-                      <PackagePlus className="w-3.5 h-3.5" />
-                      <span>Assign Items</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPrintItem({
-                          title: s.itemName,
-                          subtitle: `SERIAL NO: ${s.serialNumber}`,
-                          qrCodeUrl: s.qrCodeUrl,
-                        })
-                      }
-                      className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Print Tag</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -2036,6 +2328,7 @@ export default function UtilitiesPage() {
                         <th className="py-2.5 px-3">Product Name</th>
                         <th className="py-2.5 px-3">Barcode</th>
                         <th className="py-2.5 px-3 text-right">Quantity</th>
+                        <th className="py-2.5 px-3 text-right w-12">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200">
@@ -2049,6 +2342,16 @@ export default function UtilitiesPage() {
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900">
                             {item.quantity} units
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItemFromRack(viewRack.id, item.itemId)}
+                              className="p-1 text-neutral-400 hover:text-red-600 rounded hover:bg-red-50 cursor-pointer"
+                              title="Remove item from rack"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -2068,15 +2371,322 @@ export default function UtilitiesPage() {
               )}
             </div>
 
-            <div className="p-4 border-t border-neutral-100 bg-neutral-50 flex items-center justify-end">
+            <div className="p-4 border-t border-neutral-100 bg-neutral-50 flex items-center justify-between">
+              <div className="text-xs text-neutral-500 font-mono">
+                Total: {viewRack.assignedItems?.reduce((acc, i) => acc + (i.quantity || 1), 0) || 0} units
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = viewRack;
+                    setViewRack(null);
+                    handleOpenAddItemsRack(cur);
+                  }}
+                  className="px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-semibold hover:bg-emerald-100 cursor-pointer flex items-center gap-1"
+                >
+                  <PackagePlus className="w-3.5 h-3.5" />
+                  <span>+ Add More</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewRack(null)}
+                  className="px-4 py-1.5 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== VIEW SERIAL CONTENTS MODAL ==================== */}
+      {viewSerial && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-blue-600 text-white">
+                  <Hash className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Serial {viewSerial.serialNumber} Assigned Products
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 font-mono">
+                    BATCH / ITEM: {viewSerial.itemName}
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setViewRack(null)}
-                className="px-4 py-1.5 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                onClick={() => setViewSerial(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
               >
-                Close
+                <X className="w-5 h-5" />
               </button>
             </div>
+
+            <div className="p-5 space-y-4">
+              {viewSerial.assignedItems && viewSerial.assignedItems.length > 0 ? (
+                <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-neutral-100 text-neutral-600 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Product Name</th>
+                        <th className="py-2.5 px-3">Barcode</th>
+                        <th className="py-2.5 px-3 text-right">Quantity</th>
+                        <th className="py-2.5 px-3 text-right w-12">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200">
+                      {viewSerial.assignedItems.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-neutral-50">
+                          <td className="py-2.5 px-3 font-semibold text-neutral-900">
+                            {item.name}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-500">
+                            {item.barcodeId}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900">
+                            {item.quantity} units
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItemFromSerial(viewSerial.id, item.itemId)}
+                              className="p-1 text-neutral-400 hover:text-red-600 rounded hover:bg-red-50 cursor-pointer"
+                              title="Remove item from serial"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-8 text-center bg-neutral-50 rounded-xl border border-neutral-200">
+                  <Package className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-neutral-700">
+                    No products currently assigned to this serial number
+                  </p>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Click "+ Assign" in the serials table to add products from your store.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-neutral-100 bg-neutral-50 flex items-center justify-between">
+              <div className="text-xs text-neutral-500 font-mono">
+                Total: {viewSerial.assignedItems?.reduce((acc, i) => acc + (i.quantity || 1), 0) || 0} units
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = viewSerial;
+                    setViewSerial(null);
+                    handleOpenAddItemsSerial(cur);
+                  }}
+                  className="px-3 py-1.5 bg-blue-50 text-blue-800 border border-blue-200 rounded-lg text-xs font-semibold hover:bg-blue-100 cursor-pointer flex items-center gap-1"
+                >
+                  <PackagePlus className="w-3.5 h-3.5" />
+                  <span>+ Assign More</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewSerial(null)}
+                  className="px-4 py-1.5 bg-neutral-900 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MOVE MULTIPLE ITEMS BETWEEN SERIALS MODAL ==================== */}
+      {moveSerial && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-neutral-200 my-8">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-100 bg-blue-50/60">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-blue-600 text-white">
+                  <ArrowLeftRight className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">
+                    Move Items from Serial {moveSerial.serialNumber}
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Transfer assigned items to another serial number
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMoveSerial(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-800 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleMoveMultipleSerialItemsSubmit} className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              {/* Destination Target Serial */}
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Select Destination Target Serial Number <span className="text-red-500">*</span>
+                </label>
+                <select
+                  required
+                  value={targetSerialId}
+                  onChange={(e) => setTargetSerialId(e.target.value)}
+                  disabled={movingSerialItems}
+                  className="w-full bg-white text-xs text-neutral-900 p-2.5 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
+                >
+                  <option value="">-- Choose Target Serial --</option>
+                  {serials
+                    .filter((s) => s.id !== moveSerial.id)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.serialNumber} - {s.itemName} ({s.assignedItems?.length || 0} items)
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Items to Move Rows */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-700">
+                    Items & Quantities to Move
+                  </span>
+                  {moveSerial.assignedItems && moveSerial.assignedItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSerialItemsToMove((prev) => [
+                          ...prev,
+                          { itemId: "", quantity: 1 },
+                        ])
+                      }
+                      className="flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-800 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Another Item to Move</span>
+                    </button>
+                  )}
+                </div>
+
+                {moveSerial.assignedItems && moveSerial.assignedItems.length > 0 ? (
+                  serialItemsToMove.map((row, idx) => {
+                    const selectedItem = moveSerial.assignedItems?.find(
+                      (i) => i.itemId === row.itemId
+                    );
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 p-2 bg-neutral-50 rounded-xl border border-neutral-200"
+                      >
+                        <select
+                          required
+                          value={row.itemId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSerialItemsToMove((prev) =>
+                              prev.map((r, i) =>
+                                i === idx ? { ...r, itemId: val } : r
+                              )
+                            );
+                          }}
+                          disabled={movingSerialItems}
+                          className="flex-1 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">-- Select Assigned Item --</option>
+                          {moveSerial.assignedItems?.map((item) => (
+                            <option key={item.itemId} value={item.itemId}>
+                              {item.name} ({item.quantity} available)
+                            </option>
+                          ))}
+                        </select>
+
+                        <input
+                          type="number"
+                          min={1}
+                          max={selectedItem?.quantity || 1}
+                          required
+                          placeholder="Qty"
+                          value={row.quantity}
+                          onChange={(e) => {
+                            const qty = Number(e.target.value);
+                            setSerialItemsToMove((prev) =>
+                              prev.map((r, i) =>
+                                i === idx ? { ...r, quantity: qty } : r
+                              )
+                            );
+                          }}
+                          disabled={movingSerialItems}
+                          className="w-20 bg-white text-xs text-neutral-900 p-2 rounded-lg border border-neutral-300 focus:outline-none font-mono text-center"
+                        />
+
+                        {serialItemsToMove.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSerialItemsToMove((prev) =>
+                                prev.filter((_, i) => i !== idx)
+                              )
+                            }
+                            className="p-1.5 text-neutral-400 hover:text-red-600 rounded-lg cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 text-xs font-medium">
+                    This serial currently has 0 items assigned. Assign products to this serial first.
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMoveSerial(null)}
+                  disabled={movingSerialItems}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    movingSerialItems ||
+                    !targetSerialId ||
+                    !moveSerial.assignedItems ||
+                    moveSerial.assignedItems.length === 0
+                  }
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {movingSerialItems ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                  )}
+                  <span>Transfer Items Now</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

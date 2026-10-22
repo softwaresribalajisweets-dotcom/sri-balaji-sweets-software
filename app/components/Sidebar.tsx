@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Package,
   Boxes,
+  Gift,
   Barcode,
   FolderTree,
   Store,
@@ -46,6 +47,12 @@ const navItems: NavItem[] = [
     name: "Item Batches",
     href: "/batches",
     icon: Boxes,
+  },
+  {
+    name: "Gift Hampers",
+    href: "/gift-hampers",
+    icon: Gift,
+    badge: "New",
   },
   {
     name: "Barcode Generator",
