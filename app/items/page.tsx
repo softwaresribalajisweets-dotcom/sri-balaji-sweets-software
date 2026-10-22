@@ -13,6 +13,7 @@ import {
   orderBy,
   serverTimestamp,
   updateDoc,
+  getCountFromServer,
 } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import {
@@ -66,14 +67,15 @@ interface CategoryDoc {
 
 // Default sweet product image fallback from public folder
 const DEFAULT_ITEM_IMAGE = "/default-img.png";
-const ITEMS_PER_PAGE = 45;
+const ITEMS_PER_PAGE = 24;
 
 export default function ItemsPage() {
   const [items, setItems] = useState<ItemProduct[]>([]);
   const [categories, setCategories] = useState<CategoryDoc[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
+  const [serverTotalCount, setServerTotalCount] = useState<number | null>(null);
 
-  // Pagination State
+  // Pagination State (Limit 24 items per page)
   const [currentPage, setCurrentPage] = useState(1);
 
   // Add Item Modal State
@@ -171,6 +173,20 @@ export default function ItemsPage() {
       unsubscribeItems();
       unsubscribeCats();
     };
+  }, []);
+
+  // Fetch count using Firestore getCountFromServer aggregation function
+  const fetchItemCount = async () => {
+    try {
+      const snap = await getCountFromServer(collection(db, "items"));
+      setServerTotalCount(snap.data().count);
+    } catch (err) {
+      console.warn("Could not fetch server count for items:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchItemCount();
   }, []);
 
   // Open Edit Modal with prefilled data
@@ -887,7 +903,7 @@ export default function ItemsPage() {
                   of <strong className="font-mono text-neutral-900">{filteredItems.length}</strong> products
                 </span>
                 <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-200/60 text-neutral-700 text-[11px] font-medium">
-                  45 items / page
+                  24 items / page
                 </span>
               </div>
 

@@ -12,6 +12,7 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  getCountFromServer,
 } from "firebase/firestore";
 import {
   Boxes,
@@ -96,7 +97,7 @@ interface ItemBatch {
 
 const DEFAULT_ITEM_IMAGE = "/default-img.png";
 const PRESET_EXPIRY_DAYS = [2, 3, 4, 5, 7, 10, 15, 30, 45, 90];
-const ITEMS_PER_PAGE = 45;
+const ITEMS_PER_PAGE = 24;
 
 export default function ItemBatchesPage() {
   const [items, setItems] = useState<ItemProduct[]>([]);
@@ -105,6 +106,7 @@ export default function ItemBatchesPage() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [loadingBatches, setLoadingBatches] = useState(true);
   const [loadingStores, setLoadingStores] = useState(true);
+  const [serverBatchCount, setServerBatchCount] = useState<number | null>(null);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState("");
@@ -112,7 +114,7 @@ export default function ItemBatchesPage() {
   const [batchStatusFilter, setBatchStatusFilter] = useState<"all" | "active" | "expired" | "no_batches">("all");
   const [activeTab, setActiveTab] = useState<"items_view" | "logs_view">("items_view");
 
-  // Pagination State (45 items per page)
+  // Pagination State (24 items per page)
   const [currentPage, setCurrentPage] = useState(1);
 
   // Add Batch Modal State
@@ -202,6 +204,20 @@ export default function ItemBatchesPage() {
       unsubscribeBatches();
       unsubscribeStores();
     };
+  }, []);
+
+  // Fetch count using Firestore getCountFromServer aggregation function
+  const fetchBatchCount = async () => {
+    try {
+      const snap = await getCountFromServer(collection(db, "batches"));
+      setServerBatchCount(snap.data().count);
+    } catch (err) {
+      console.warn("Could not fetch server count for batches:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchBatchCount();
   }, []);
 
   // Compute next item-specific numeric batch code
@@ -790,7 +806,7 @@ export default function ItemBatchesPage() {
                       of <strong className="font-mono text-neutral-900">{filteredItems.length}</strong> products
                     </span>
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-200/60 text-neutral-700 text-[11px] font-medium">
-                      45 items / page
+                      24 items / page
                     </span>
                   </div>
 

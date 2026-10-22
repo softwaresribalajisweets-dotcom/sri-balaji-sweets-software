@@ -13,6 +13,8 @@ import {
   orderBy,
   serverTimestamp,
   updateDoc,
+  getCountFromServer,
+  where,
 } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import QRCode from "qrcode";
@@ -47,6 +49,10 @@ import {
   Check,
   Image as ImageIcon,
   UploadCloud,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 
 interface RackAllocation {
@@ -93,17 +99,27 @@ interface SerialDoc {
 }
 
 const DEFAULT_ITEM_IMAGE = "/default-img.png";
+const ITEMS_PER_PAGE = 24;
 
 export default function GiftHampersPage() {
   const [hampers, setHampers] = useState<GiftHamperProduct[]>([]);
   const [racks, setRacks] = useState<RackDoc[]>([]);
   const [serials, setSerials] = useState<SerialDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [serverHamperCount, setServerHamperCount] = useState<number | null>(null);
+
+  // Pagination State (Limit 24 per page)
+  const [currentPage, setCurrentPage] = useState(1);
 
   // View Mode
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [searchQuery, setSearchQuery] = useState("");
   const [rackFilter, setRackFilter] = useState("all");
+
+  // Reset pagination when search or rack filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, rackFilter]);
 
   // Single Add Hamper Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -228,6 +244,21 @@ export default function GiftHampersPage() {
       unsubscribeRacks();
       unsubscribeSerials();
     };
+  }, []);
+
+  // Fetch count using Firestore getCountFromServer aggregation function
+  const fetchHamperServerCount = async () => {
+    try {
+      const qHamper = query(collection(db, "items"), where("isGiftHamper", "==", true));
+      const countSnap = await getCountFromServer(qHamper);
+      setServerHamperCount(countSnap.data().count);
+    } catch (err) {
+      console.warn("Could not fetch server count for hampers:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchHamperServerCount();
   }, []);
 
   // Update total stock count when allocations change in Add form
@@ -503,6 +534,7 @@ export default function GiftHampersPage() {
       setImagePreview("");
       setAllocations([{ rackCode: "", rackName: "", serialNumber: "", count: 10 }]);
       setIsAddModalOpen(false);
+      fetchHamperServerCount();
       alert(`Gift Hamper "${name}" created and assigned successfully!`);
     } catch (err: any) {
       console.error("Failed to create hamper:", err);
@@ -604,6 +636,7 @@ export default function GiftHampersPage() {
     if (confirm(`Are you sure you want to delete Gift Hamper "${hamperName}"?`)) {
       try {
         await deleteDoc(doc(db, "items", id));
+        fetchHamperServerCount();
       } catch (err: any) {
         alert(`Failed to delete: ${err.message}`);
       }
@@ -965,6 +998,7 @@ export default function GiftHampersPage() {
       setIsBulkModalOpen(false);
       setBulkFile(null);
       setBulkProgress(null);
+      fetchHamperServerCount();
       alert(`Successfully imported all ${total} Gift Hampers with automatic Rack and Serial allocations!`);
     } catch (err: any) {
       console.error("Bulk upload error:", err);
@@ -995,6 +1029,119 @@ export default function GiftHampersPage() {
 
     return matchesSearch && matchesRack;
   });
+
+  // Calculate Pagination Slices (Strict Limit of 24 items per page)
+  const totalPages = Math.ceil(filteredHampers.length / ITEMS_PER_PAGE) || 1;
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedHampers = filteredHampers.slice(startIndex, endIndex);
+
+  // Reusable Pagination Bar (rendered if totalPages > 1)
+  const renderPagination = () => {
+    if (totalPages <= 1) return null;
+    return (
+      <div className="p-3.5 bg-neutral-50/90 border-t border-neutral-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5 text-neutral-600 font-medium">
+          <span>
+            Showing <strong className="font-mono text-neutral-900">{filteredHampers.length === 0 ? 0 : startIndex + 1}</strong> to{" "}
+            <strong className="font-mono text-neutral-900">
+              {Math.min(endIndex, filteredHampers.length)}
+            </strong>{" "}
+            of <strong className="font-mono text-neutral-900">{filteredHampers.length}</strong> gift hampers
+          </span>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-pink-100 text-pink-700 text-[11px] font-semibold">
+            24 items / page
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap justify-center">
+          {/* First Page Button */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage(1)}
+            disabled={currentPage === 1}
+            className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="First Page"
+          >
+            <ChevronsLeft className="w-4 h-4" />
+          </button>
+
+          {/* Previous Button */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+            disabled={currentPage === 1}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Prev</span>
+          </button>
+
+          {/* Numbered Page Buttons with Ellipsis */}
+          <div className="flex items-center gap-1 px-1">
+            {(() => {
+              const range: (number | string)[] = [];
+              if (totalPages <= 7) {
+                for (let i = 1; i <= totalPages; i++) range.push(i);
+              } else if (currentPage <= 4) {
+                range.push(1, 2, 3, 4, 5, "...", totalPages);
+              } else if (currentPage >= totalPages - 3) {
+                range.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+              } else {
+                range.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages);
+              }
+
+              return range.map((page, idx) => {
+                if (typeof page === "string") {
+                  return (
+                    <span key={`ellipsis-${idx}`} className="px-1 text-neutral-400 font-mono select-none">
+                      ...
+                    </span>
+                  );
+                }
+                return (
+                  <button
+                    key={`page-${page}`}
+                    type="button"
+                    onClick={() => setCurrentPage(page)}
+                    className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      currentPage === page
+                        ? "bg-neutral-900 text-white shadow-xs"
+                        : "bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
+                    }`}
+                  >
+                    {page}
+                  </button>
+                );
+              });
+            })()}
+          </div>
+
+          {/* Next Button */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+            disabled={currentPage >= totalPages}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Last Page Button */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage(totalPages)}
+            disabled={currentPage >= totalPages}
+            className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="Last Page"
+          >
+            <ChevronsRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   // Calculate KPIs
   const totalStockCount = hampers.reduce((acc, h) => acc + (h.stockCount || 0), 0);
@@ -1067,7 +1214,9 @@ export default function GiftHampersPage() {
             </div>
             <div>
               <p className="text-[11px] text-neutral-500 font-medium">Total Gift Hampers</p>
-              <h3 className="text-base font-bold text-neutral-900">{hampers.length} Items</h3>
+              <h3 className="text-base font-bold text-neutral-900">
+                {serverHamperCount !== null ? Math.max(serverHamperCount, hampers.length) : hampers.length} Items
+              </h3>
             </div>
           </div>
 
@@ -1223,7 +1372,7 @@ export default function GiftHampersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-200/60 text-xs">
-                  {filteredHampers.map((hamper) => {
+                  {paginatedHampers.map((hamper) => {
                     return (
                       <tr
                         key={hamper.id}
@@ -1376,11 +1525,13 @@ export default function GiftHampersPage() {
                 </tbody>
               </table>
             </div>
+            {renderPagination()}
           </div>
         ) : (
           /* ==================== GRID VIEW ==================== */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredHampers.map((hamper) => {
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {paginatedHampers.map((hamper) => {
               return (
                 <div
                   key={hamper.id}
@@ -1492,7 +1643,15 @@ export default function GiftHampersPage() {
               );
             })}
           </div>
-        )}
+
+          {/* Grid View Pagination */}
+          {totalPages > 1 && (
+            <div className="bg-white border border-neutral-200/90 rounded-xl shadow-2xs overflow-hidden">
+              {renderPagination()}
+            </div>
+          )}
+        </div>
+      )}
 
         {/* ==================== ADD GIFT HAMPER MODAL ==================== */}
         {isAddModalOpen && (

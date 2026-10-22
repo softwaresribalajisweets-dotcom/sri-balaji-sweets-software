@@ -14,6 +14,7 @@ import {
   orderBy,
   serverTimestamp,
   updateDoc,
+  getCountFromServer,
 } from "firebase/firestore";
 import {
   Wrench,
@@ -41,6 +42,9 @@ import {
   PackagePlus,
   Eye,
   ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Package,
   Barcode,
   ShoppingBag,
@@ -76,11 +80,25 @@ interface StoreProduct {
   category: string;
 }
 
+const ITEMS_PER_PAGE = 24;
+
 export default function UtilitiesPage() {
   const [activeTab, setActiveTab] = useState<"racks" | "serials" | "tools">(
     "racks"
   );
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Pagination & Server Count States (Limit 24 items per page)
+  const [rackPage, setRackPage] = useState(1);
+  const [serialPage, setSerialPage] = useState(1);
+  const [serverRacksCount, setServerRacksCount] = useState<number | null>(null);
+  const [serverSerialsCount, setServerSerialsCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    setRackPage(1);
+    setSerialPage(1);
+  }, [searchQuery]);
 
   // Racks State
   const [racks, setRacks] = useState<RackItem[]>([]);
@@ -165,9 +183,6 @@ export default function UtilitiesPage() {
   // View Serial Contents Modal State
   const [viewSerial, setViewSerial] = useState<SerialItem | null>(null);
 
-  // Filter & Search State
-  const [searchQuery, setSearchQuery] = useState("");
-
   // Print Preview Modal
   const [printItem, setPrintItem] = useState<{
     title: string;
@@ -235,6 +250,24 @@ export default function UtilitiesPage() {
       unsubscribeSerials();
       unsubscribeItems();
     };
+  }, []);
+
+  // Fetch count using Firestore getCountFromServer aggregation function
+  const fetchCounts = async () => {
+    try {
+      const [racksSnap, serialsSnap] = await Promise.all([
+        getCountFromServer(collection(db, "racks")),
+        getCountFromServer(collection(db, "serials")),
+      ]);
+      setServerRacksCount(racksSnap.data().count);
+      setServerSerialsCount(serialsSnap.data().count);
+    } catch (err) {
+      console.warn("Could not fetch server counts:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCounts();
   }, []);
 
   // Open Add Items Modal for Rack
@@ -966,6 +999,137 @@ export default function UtilitiesPage() {
       s.itemName.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Pagination Slices (Strict Limit of 24 items per page)
+  const totalRackPages = Math.ceil(filteredRacks.length / ITEMS_PER_PAGE) || 1;
+  const rackStartIndex = (rackPage - 1) * ITEMS_PER_PAGE;
+  const rackEndIndex = rackStartIndex + ITEMS_PER_PAGE;
+  const paginatedRacks = filteredRacks.slice(rackStartIndex, rackEndIndex);
+
+  const totalSerialPages = Math.ceil(filteredSerials.length / ITEMS_PER_PAGE) || 1;
+  const serialStartIndex = (serialPage - 1) * ITEMS_PER_PAGE;
+  const serialEndIndex = serialStartIndex + ITEMS_PER_PAGE;
+  const paginatedSerials = filteredSerials.slice(serialStartIndex, serialEndIndex);
+
+  // Rack Pagination Component (rendered if totalRackPages > 1)
+  const renderRackPagination = () => {
+    if (totalRackPages <= 1) return null;
+    return (
+      <div className="p-3.5 bg-neutral-50/90 border-t border-neutral-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5 text-neutral-600 font-medium">
+          <span>
+            Showing <strong className="font-mono text-neutral-900">{filteredRacks.length === 0 ? 0 : rackStartIndex + 1}</strong> to{" "}
+            <strong className="font-mono text-neutral-900">{Math.min(rackEndIndex, filteredRacks.length)}</strong> of{" "}
+            <strong className="font-mono text-neutral-900">{filteredRacks.length}</strong> racks
+          </span>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[11px] font-semibold">
+            24 items / page
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap justify-center">
+          <button
+            type="button"
+            onClick={() => setRackPage(1)}
+            disabled={rackPage === 1}
+            className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="First Page"
+          >
+            <ChevronsLeft className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setRackPage((prev) => Math.max(prev - 1, 1))}
+            disabled={rackPage === 1}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Prev</span>
+          </button>
+          <span className="px-2 text-xs font-mono font-bold text-neutral-800">
+            {rackPage} / {totalRackPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setRackPage((prev) => Math.min(prev + 1, totalRackPages))}
+            disabled={rackPage >= totalRackPages}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setRackPage(totalRackPages)}
+            disabled={rackPage >= totalRackPages}
+            className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="Last Page"
+          >
+            <ChevronsRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Serial Pagination Component (rendered if totalSerialPages > 1)
+  const renderSerialPagination = () => {
+    if (totalSerialPages <= 1) return null;
+    return (
+      <div className="p-3.5 bg-neutral-50/90 border-t border-neutral-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5 text-neutral-600 font-medium">
+          <span>
+            Showing <strong className="font-mono text-neutral-900">{filteredSerials.length === 0 ? 0 : serialStartIndex + 1}</strong> to{" "}
+            <strong className="font-mono text-neutral-900">{Math.min(serialEndIndex, filteredSerials.length)}</strong> of{" "}
+            <strong className="font-mono text-neutral-900">{filteredSerials.length}</strong> serials
+          </span>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[11px] font-semibold">
+            24 items / page
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap justify-center">
+          <button
+            type="button"
+            onClick={() => setSerialPage(1)}
+            disabled={serialPage === 1}
+            className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="First Page"
+          >
+            <ChevronsLeft className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSerialPage((prev) => Math.max(prev - 1, 1))}
+            disabled={serialPage === 1}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Prev</span>
+          </button>
+          <span className="px-2 text-xs font-mono font-bold text-neutral-800">
+            {serialPage} / {totalSerialPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSerialPage((prev) => Math.min(prev + 1, totalSerialPages))}
+            disabled={serialPage >= totalSerialPages}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-semibold shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSerialPage(totalSerialPages)}
+            disabled={serialPage >= totalSerialPages}
+            className="p-1.5 bg-white border border-neutral-300 text-neutral-700 rounded-lg shadow-2xs hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            title="Last Page"
+          >
+            <ChevronsRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <AppLayout>
       {/* Top Header & Page Actions */}
@@ -1149,7 +1313,7 @@ export default function UtilitiesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200/60 text-xs">
-                    {filteredRacks.map((rack) => {
+                    {paginatedRacks.map((rack) => {
                       const itemCount = rack.assignedItems?.length || 0;
                       const totalQty =
                         rack.assignedItems?.reduce(
@@ -1297,11 +1461,13 @@ export default function UtilitiesPage() {
                   </tbody>
                 </table>
               </div>
+              {renderRackPagination()}
             </div>
           ) : (
             /* ================= RACKS GRID VIEW ================= */
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredRacks.map((rack) => {
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {paginatedRacks.map((rack) => {
                 const itemCount = rack.assignedItems?.length || 0;
                 const totalQty =
                   rack.assignedItems?.reduce(
@@ -1409,7 +1575,14 @@ export default function UtilitiesPage() {
                 );
               })}
             </div>
-          )}
+
+            {totalRackPages > 1 && (
+              <div className="bg-white border border-neutral-200/90 rounded-xl shadow-2xs overflow-hidden">
+                {renderRackPagination()}
+              </div>
+            )}
+          </div>
+        )}
         </div>
       )}
 
@@ -1528,7 +1701,7 @@ export default function UtilitiesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200/60 text-xs">
-                    {filteredSerials.map((s) => {
+                    {paginatedSerials.map((s) => {
                       const itemCount = s.assignedItems?.length || 0;
                       const totalQty =
                         s.assignedItems?.reduce(
@@ -1685,11 +1858,13 @@ export default function UtilitiesPage() {
                   </tbody>
                 </table>
               </div>
+              {renderSerialPagination()}
             </div>
           ) : (
             /* ================= SERIALS GRID VIEW ================= */
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredSerials.map((s) => {
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {paginatedSerials.map((s) => {
                 const itemCount = s.assignedItems?.length || 0;
                 const totalQty =
                   s.assignedItems?.reduce(
@@ -1801,7 +1976,14 @@ export default function UtilitiesPage() {
                 );
               })}
             </div>
-          )}
+
+            {totalSerialPages > 1 && (
+              <div className="bg-white border border-neutral-200/90 rounded-xl shadow-2xs overflow-hidden">
+                {renderSerialPagination()}
+              </div>
+            )}
+          </div>
+        )}
         </div>
       )}
 
